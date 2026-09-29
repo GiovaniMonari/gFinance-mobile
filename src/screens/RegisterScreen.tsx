@@ -1,3 +1,4 @@
+
 import { useState } from 'react'
 import {
   View,
@@ -9,53 +10,93 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Image
+  Image,
 } from 'react-native'
 import { Ionicons } from '@expo/vector-icons'
 import { NativeStackScreenProps } from '@react-navigation/native-stack'
+
 import logo from '../../assets/logogFinance.png'
-import { login } from '../api/authApi'
 import { RootStackParamList } from '../navigation/AppNavigator'
+import { register } from '../api/authApi'
 
 type Props = NativeStackScreenProps<
   RootStackParamList,
-  'Login'
+  'Register'
 >
 
-export function LoginScreen({ navigation }: Props) {
+export function RegisterScreen({ navigation }: Props) {
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] =
+    useState(false)
 
-  async function handleLogin() {
+  async function handleRegister() {
+    const cleanName = name.trim()
     const cleanEmail = email.trim()
 
-    if (!cleanEmail || !password) {
-      Alert.alert(
+    if (
+        !cleanName ||
+        !cleanEmail ||
+        !password ||
+        !confirmPassword
+    ) {
+        Alert.alert(
         'Atenção',
-        'Preencha o e-mail e a senha.',
-      )
-      return
+        'Preencha todos os campos.',
+        )
+        return
+    }
+
+    if (password.length < 6) {
+        Alert.alert(
+        'Senha inválida',
+        'A senha deve ter pelo menos 6 caracteres.',
+        )
+        return
+    }
+
+    if (password !== confirmPassword) {
+        Alert.alert(
+        'Senhas diferentes',
+        'A confirmação da senha não corresponde à senha informada.',
+        )
+        return
     }
 
     try {
-      setLoading(true)
+        setLoading(true)
 
-      await login(cleanEmail, password)
+        await register(
+        cleanEmail,
+        password,
+        )
 
-      navigation.replace('Main')
+        Alert.alert(
+        'Conta criada',
+        'Sua conta foi criada com sucesso. Agora você já pode entrar.',
+        [
+            {
+            text: 'Entrar',
+            onPress: () => navigation.replace('Login'),
+            },
+        ],
+        )
     } catch (error) {
-      Alert.alert(
-        'Não foi possível entrar',
+        Alert.alert(
+        'Não foi possível criar sua conta',
         error instanceof Error
-          ? error.message
-          : 'Verifique suas credenciais e tente novamente.',
-      )
+            ? error.message
+            : 'Tente novamente em alguns instantes.',
+        )
     } finally {
-      setLoading(false)
+        setLoading(false)
     }
-  }
+    }
 
   return (
     <KeyboardAvoidingView
@@ -81,34 +122,35 @@ export function LoginScreen({ navigation }: Props) {
           />
 
           <Text style={styles.subtitle}>
-            Sua vida financeira, mais inteligente.
+            Comece a organizar sua vida financeira.
           </Text>
 
           <View style={styles.headerAccent}>
             <View style={styles.accentDot} />
+
             <Text style={styles.accentText}>
               gFinance V2
             </Text>
           </View>
         </View>
 
-        {/* LOGIN CARD */}
+        {/* REGISTER CARD */}
 
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <View>
+            <View style={styles.cardHeaderContent}>
               <Text style={styles.cardTitle}>
-                Bem-vindo de volta
+                Crie sua conta
               </Text>
 
               <Text style={styles.cardSubtitle}>
-                Entre para continuar.
+                Preencha seus dados para começar.
               </Text>
             </View>
 
             <View style={styles.cardIcon}>
               <Ionicons
-                name="arrow-forward"
+                name="person-add-outline"
                 size={18}
                 color="#2563eb"
               />
@@ -116,6 +158,8 @@ export function LoginScreen({ navigation }: Props) {
           </View>
 
           <View style={styles.form}>
+            {/* E-MAIL */}
+
             <View style={styles.inputGroup}>
               <Text style={styles.label}>
                 E-mail
@@ -142,6 +186,8 @@ export function LoginScreen({ navigation }: Props) {
               </View>
             </View>
 
+            {/* SENHA */}
+
             <View style={styles.inputGroup}>
               <Text style={styles.label}>
                 Senha
@@ -156,7 +202,7 @@ export function LoginScreen({ navigation }: Props) {
 
                 <TextInput
                   style={styles.input}
-                  placeholder="Digite sua senha"
+                  placeholder="Crie uma senha"
                   placeholderTextColor="#98a2b3"
                   secureTextEntry={!showPassword}
                   value={password}
@@ -184,23 +230,71 @@ export function LoginScreen({ navigation }: Props) {
               </View>
             </View>
 
+            {/* CONFIRMAR SENHA */}
+
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>
+                Confirmar senha
+              </Text>
+
+              <View style={styles.inputContainer}>
+                <Ionicons
+                  name="shield-checkmark-outline"
+                  size={19}
+                  color="#98a2b3"
+                />
+
+                <TextInput
+                  style={styles.input}
+                  placeholder="Digite a senha novamente"
+                  placeholderTextColor="#98a2b3"
+                  secureTextEntry={!showConfirmPassword}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  editable={!loading}
+                />
+
+                <TouchableOpacity
+                  onPress={() =>
+                    setShowConfirmPassword(
+                      (value) => !value,
+                    )
+                  }
+                  disabled={loading}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={
+                      showConfirmPassword
+                        ? 'eye-off-outline'
+                        : 'eye-outline'
+                    }
+                    size={19}
+                    color="#98a2b3"
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* BUTTON */}
+
             <TouchableOpacity
               style={[
                 styles.button,
                 loading && styles.buttonDisabled,
               ]}
-              onPress={handleLogin}
+              onPress={handleRegister}
               disabled={loading}
               activeOpacity={0.85}
             >
               {loading ? (
                 <Text style={styles.buttonText}>
-                  Entrando...
+                  Criando conta...
                 </Text>
               ) : (
                 <>
                   <Text style={styles.buttonText}>
-                    Entrar
+                    Criar conta
                   </Text>
 
                   <Ionicons
@@ -218,17 +312,15 @@ export function LoginScreen({ navigation }: Props) {
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>
-            Ainda não possui uma conta?
+            Já possui uma conta?
           </Text>
 
           <TouchableOpacity
-            onPress={() => {
-              navigation.navigate('Register')
-            }}
+            onPress={() => navigation.replace('Login')}
             activeOpacity={0.7}
           >
             <Text style={styles.registerText}>
-              Cadastre-se
+              Entrar
             </Text>
           </TouchableOpacity>
         </View>
@@ -258,18 +350,10 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
 
- logo: {
+  logo: {
     width: 300,
     height: 120,
     alignSelf: 'center',
-  },
-
-  title: {
-    fontSize: 31,
-    lineHeight: 37,
-    fontWeight: '800',
-    letterSpacing: -0.8,
-    color: '#101828',
   },
 
   subtitle: {
@@ -337,6 +421,11 @@ const styles = StyleSheet.create({
     marginBottom: 26,
   },
 
+  cardHeaderContent: {
+    flex: 1,
+    paddingRight: 16,
+  },
+
   cardTitle: {
     fontSize: 22,
     lineHeight: 28,
@@ -356,6 +445,7 @@ const styles = StyleSheet.create({
   cardIcon: {
     width: 36,
     height: 36,
+
     alignItems: 'center',
     justifyContent: 'center',
 

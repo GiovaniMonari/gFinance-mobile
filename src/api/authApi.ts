@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store'
 
-const API_URL = 'https://gfinance-production-d5a6.up.railway.app'
+const API_URL =
+  'https://gfinance-production-d5a6.up.railway.app'
 
 export async function login(
   email: string,
@@ -31,6 +32,34 @@ export async function login(
   )
 
   return data.access_token
+}
+
+export async function register(
+  email: string,
+  password: string,
+) {
+  const response = await fetch(`${API_URL}/auth/register`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email,
+      password,
+    }),
+  })
+
+  const data = await response.json()
+
+  if (!response.ok) {
+    throw new Error(
+      Array.isArray(data.message)
+        ? data.message.join('\n')
+        : data.message || 'Não foi possível criar sua conta.',
+    )
+  }
+
+  return data
 }
 
 export async function getAccessToken() {
