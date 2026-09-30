@@ -8,13 +8,21 @@
  * connection. That is the point: the account writing this has no Open Finance
  * link and still needs fixed monthly costs recorded.
  *
+ * Two animation drivers share this screen, and they do not mix. The screen
+ * entrances come from `useEntrance`, which is built on React Native's own
+ * `Animated` and hands back an `Animated.Value` sitting in `translateY` — so
+ * those go on React Native's `Animated.View`. The press feedback comes from
+ * `usePressScale`, which is built on Reanimated and hands back a UI-thread
+ * style — so the chip goes on Reanimated's `Animated.View`. Putting a React
+ * Native interpolation into a Reanimated transform is what breaks.
+ *
  * Parsing, validation and the API call follow the shape the backend already
  * expects (`amount`, `description`, `categoryId`, `dayOfMonth`).
  */
 
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
-import Animated from 'react-native-reanimated';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import Reanimated from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { getCategories, type Category } from '../api/categoryApi';
 import { createRecurringExpense } from '../api/recurringApi';
@@ -68,14 +76,14 @@ function Chip({
       accessibilityState={{ selected: active }}
       style={[styles.chip, active && styles.chipActive]}
     >
-      <Animated.View style={[styles.chipContent, pressStyle]}>
+      <Reanimated.View style={[styles.chipContent, pressStyle]}>
         <AppText
           variant="captionStrong"
           tone={active ? 'accent' : 'secondary'}
         >
           {label}
         </AppText>
-      </Animated.View>
+      </Reanimated.View>
     </Pressable>
   );
 }
