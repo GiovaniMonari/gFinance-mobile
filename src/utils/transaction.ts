@@ -128,6 +128,12 @@ export function translateCategory(category: string | null | undefined) {
 /**
  * Bank account types from the aggregator. Same pass-through rule as the
  * category table: known codes are localised, anything else is left alone.
+ *
+ * The service now translates these before they leave the backend, so what
+ * arrives here is usually the finished pt-BR label. The table remains as a
+ * fallback for anything untranslated, and anything unknown passes through:
+ * the old fixed "Conta" would have hidden a perfectly good "Conta salário"
+ * the moment the table missed it.
  */
 const ACCOUNT_SUBTYPES: Record<string, string> = {
   checking_account: 'Conta corrente',
@@ -139,5 +145,5 @@ const ACCOUNT_SUBTYPES: Record<string, string> = {
 export function translateAccountSubtype(subtype: string | null | undefined) {
   if (!subtype) return 'Conta'
   const key = subtype.trim().toLowerCase().replace(/[\s-]+/g, '_')
-  return ACCOUNT_SUBTYPES[key] ?? 'Conta'
+  return ACCOUNT_SUBTYPES[key] ?? subtype
 }

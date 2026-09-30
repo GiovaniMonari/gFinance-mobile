@@ -56,6 +56,67 @@ export async function connectBank(
   return response.json()
 }
 
+export type DisconnectResult = {
+  /**
+   * `already_disconnected` means the backend found the record already
+   * revoked — the end state is reached, so the caller should show it as a
+   * settled fact rather than as an error.
+   */
+  status: 'disconnected' | 'already_disconnected';
+  connection: { id: string; status: string } | null;
+};
+
+/**
+ * Sever the link with the bank.
+ *
+ * The revocation happens upstream at Pluggy before our own record moves, so a
+ * rejected call is a real failure and must not be reported as success.
+ *
+ * 409 is the one non-2xx that is not a failure: it answers a connection that
+ * was already disconnected, which is what the user is asking for anyway.
+ */
+export async function disconnectConnection(
+  accessToken: string,
+  connectionId: string,
+): Promise<DisconnectResult> {
+  const response = await fetch(
+    `${API_URL}/open-finance/connections/${connectionId}`,
+    {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    },
+  );
+
+  if (response.status === 409) {
+    return {
+      status: 'already_disconnected',
+      connection: null,
+    };
+  }
+
+  if (!response.ok) {
+    const data = await response
+      .json()
+      .catch(() => null);
+
+    throw new Error(
+      data?.message ||
+        `Erro ao desconectar banco: ${response.status}`,
+    );
+  }
+
+  // Read as text first: an empty body means the same settled state, and
+  // `response.json()` would throw on it and report a success as a failure.
+  const body = await response.text();
+
+  return body.trim()
+    ? JSON.parse(body)
+    : { status: 'disconnected', connection: null };
+}
+
 export async function getConnections(
   accessToken: string,
 ) {

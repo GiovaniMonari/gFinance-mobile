@@ -331,7 +331,22 @@ export function DashboardScreen() {
       if (token) {
         try {
           const connectionsResponse = await getConnections(token);
-          connection = connectionsResponse?.connections?.[0] ?? null;
+
+          /*
+           * Only a link that has not been revoked counts. A revoked row stays
+           * in the list — it is the record of what was authorised and when —
+           * so taking `[0]` blindly would present a severed connection as
+           * live, set "connected" on the screen, and then fail every call
+           * made against it.
+           */
+          const connections = (connectionsResponse?.connections ?? []) as {
+            id: string;
+            status: string;
+          }[];
+
+          connection =
+            connections.find((item) => item.status !== 'disconnected') ??
+            null;
         } catch (error) {
           console.error('Erro ao buscar conexões:', error);
           problems.push({

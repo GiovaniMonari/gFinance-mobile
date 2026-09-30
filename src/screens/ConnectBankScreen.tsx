@@ -24,6 +24,7 @@ import { PluggyConnect } from 'react-native-pluggy-connect';
 import {
   createConnectToken,
   connectBank,
+  disconnectConnection,
   getConnections,
   getAccounts,
   getTransactions,
@@ -119,6 +120,8 @@ export function ConnectBankScreen() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
+  /** Separate from `loading`, which the Pluggy token exchange owns. */
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     loadConnections();
@@ -131,7 +134,17 @@ export function ConnectBankScreen() {
       if (!accessToken) return;
 
       const response = await getConnections(accessToken);
-      const loadedConnections = response.connections ?? [];
+
+      /*
+       * Revoking a connection does not delete the row — the provider keeps a
+       * record of what was authorised and when. Dropping those here is what
+       * makes the screen read as disconnected instead of still announcing
+       * "Conexão ativa" over a link that no longer exists.
+       */
+      const loadedConnections = (
+        (response.connections ?? []) as Connection[]
+      ).filter((connection) => connection.status !== 'disconnected');
+
       const latestConnection = loadedConnections.length > 0 ? [loadedConnections[0]] : [];
       setConnections(latestConnection);
 
@@ -212,6 +225,79 @@ export function ConnectBankScreen() {
             : 'Não foi possível salvar a conexão.',
         tone: 'danger',
       });
+    }
+  }
+
+  /**
+   * Destructive, so nothing happens on a single tap. The panel states what
+   * stops, and that it can be undone, before anything is sent anywhere.
+   */
+  function confirmDisconnect() {
+    const connection = connections[0];
+
+    if (!connection || disconnecting) return;
+
+    showAlert({
+      title: 'Desconectar este banco?',
+      message:
+        'A sincronização das suas contas e transações será encerrada. Você pode conectar novamente quando quiser.',
+      tone: 'warning',
+      icon: 'unlink-outline',
+      actions: [
+        { label: 'Cancelar', style: 'secondary' },
+        {
+          label: 'Desconectar',
+          style: 'danger',
+          onPress: () => void handleDisconnect(connection.id),
+        },
+      ],
+    });
+  }
+
+  async function handleDisconnect(connectionId: string) {
+    setDisconnecting(true);
+
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('Sessão expirada');
+
+      const result = await disconnectConnection(
+        accessToken,
+        connectionId,
+      );
+
+      /*
+       * Gone either way — including when another device had already severed
+       * it — so the screen settles on the disconnected state rather than
+       * keeping a connection nobody can reach any more.
+       */
+      setConnections([]);
+      setAccounts([]);
+      setTransactions([]);
+
+      const settled =
+        result.status === 'already_disconnected';
+
+      showAlert({
+        title: settled ? 'Banco já desconectado' : 'Banco desconectado',
+        message: settled
+          ? 'Esta conexão já havia sido encerrada.'
+          : 'A sincronização com o seu banco foi encerrada.',
+        tone: settled ? 'neutral' : 'success',
+      });
+    } catch (error) {
+      console.error('ERRO AO DESCONECTAR:', error);
+
+      showAlert({
+        title: 'Não foi possível desconectar',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Tente novamente em instantes.',
+        tone: 'danger',
+      });
+    } finally {
+      setDisconnecting(false);
     }
   }
 
@@ -330,6 +416,19 @@ export function ConnectBankScreen() {
                     {accounts[0]?.marketing_name ?? 'Via Open Finance'}
                   </AppText>
                 </View>
+              </View>
+
+              <View style={styles.statusAction}>
+                <Button
+                  title="Desconectar banco"
+                  variant="danger"
+                  size="md"
+                  fullWidth
+                  icon="unlink-outline"
+                  loading={disconnecting}
+                  loadingTitle="Desconectando"
+                  onPress={confirmDisconnect}
+                />
               </View>
             </Surface>
           </Animated.View>
@@ -519,6 +618,14 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     gap: 3,
+  },
+
+  /** Hairline, matching the divider language used between account rows. */
+  statusAction: {
+    marginTop: appSpace.lg,
+    paddingTop: appSpace.lg,
+    borderTopWidth: 1,
+    borderTopColor: appColors.border,
   },
 
   /* Blocks */
