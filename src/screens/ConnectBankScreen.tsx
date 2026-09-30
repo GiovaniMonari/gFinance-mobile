@@ -26,6 +26,7 @@ import {
   connectBank,
   disconnectConnection,
   getConnections,
+  getOpenFinanceStatus,
   getAccounts,
   getTransactions,
 } from '../services/openFinanceService';
@@ -110,6 +111,33 @@ const ACCOUNT_TEXT_INDENT = 52;
 type ConnectBankNavigationProp =
   NativeStackNavigationProp<RootStackParamList, 'ConnectBank'>;
 
+/**
+ * The server's answer to whether this account may begin a connection.
+ *
+ * Held at module scope rather than inside the component: it needs nothing
+ * from a render, and keeping it there leaves `loadConnections` free of a
+ * render-scoped dependency that the mount effect would then have to track.
+ *
+ * It never throws. This is a statement of fact the screen renders, so failing
+ * to read it must not take the links down with it — `null` means the question
+ * went unanswered, which is not the same as being refused, and the screen
+ * then behaves as it always did instead of announcing a limit it never
+ * confirmed.
+ */
+async function readOpenFinanceStatus(
+  accessToken: string,
+): Promise<boolean | null> {
+  try {
+    const status = await getOpenFinanceStatus(accessToken);
+
+    return status.available;
+  } catch (error) {
+    console.error('ERRO AO VERIFICAR OPEN FINANCE:', error);
+
+    return null;
+  }
+}
+
 export function ConnectBankScreen() {
   const navigation = useNavigation<ConnectBankNavigationProp>();
   const [connectToken, setConnectToken] = useState<string | null>(null);
@@ -123,6 +151,13 @@ export function ConnectBankScreen() {
   /** Separate from `loading`, which the Pluggy token exchange owns. */
   const [disconnecting, setDisconnecting] = useState(false);
 
+  /**
+   * Whether the backend is letting this account begin a connection — `null`
+   * while unknown. It is read with the links rather than assumed from them,
+   * because it is a rule held on the server and this screen only renders it.
+   */
+  const [available, setAvailable] = useState<boolean | null>(null);
+
   useEffect(() => {
     loadConnections();
   }, []);
@@ -133,7 +168,12 @@ export function ConnectBankScreen() {
       const accessToken = await getAccessToken();
       if (!accessToken) return;
 
-      const response = await getConnections(accessToken);
+      const [response, status] = await Promise.all([
+        getConnections(accessToken),
+        readOpenFinanceStatus(accessToken),
+      ]);
+
+      setAvailable(status);
 
       /*
        * Revoking a connection does not delete the row — the provider keeps a
@@ -275,6 +315,13 @@ export function ConnectBankScreen() {
       setAccounts([]);
       setTransactions([]);
 
+      /*
+       * With no link left, whether a new one may be started is a fresh
+       * question. Answering it here stops the screen from offering a flow the
+       * backend would immediately refuse.
+       */
+      setAvailable(await readOpenFinanceStatus(accessToken));
+
       const settled =
         result.status === 'already_disconnected';
 
@@ -320,6 +367,13 @@ export function ConnectBankScreen() {
    * entrances wait for the content the same way the dashboard's do.
    */
   const contentReady = !initialLoading;
+
+  /**
+   * There is no link to show and the backend says this account may not start
+   * one. Stated rather than hidden — a button that simply vanishes leaves the
+   * user wondering whether they broke something.
+   */
+  const restricted = connections.length === 0 && available === false;
 
   const headerEntrance = useEntrance({ start: contentReady });
   const statusEntrance = useEntrance({
@@ -379,12 +433,18 @@ export function ConnectBankScreen() {
         />
 
         <AppText variant="screenTitle" tone="primary" style={styles.title}>
-          {connections.length > 0 ? bankName : 'Conecte sua conta'}
+          {connections.length > 0
+            ? bankName
+            : restricted
+              ? 'Open Finance indisponível'
+              : 'Conecte sua conta'}
         </AppText>
         <AppText variant="bodySmall" tone="secondary" style={styles.subtitle}>
           {connections.length > 0
             ? 'Suas contas são sincronizadas automaticamente pelo Open Finance.'
-            : 'Sincronize suas contas e transações automaticamente com o Econva.'}
+            : restricted
+              ? 'A conexão automática com bancos está temporariamente fechada para novas contas.'
+              : 'Sincronize suas contas e transações automaticamente com o Econva.'}
         </AppText>
       </Animated.View>
 
@@ -511,6 +571,41 @@ export function ConnectBankScreen() {
               title="Seus dados estão protegidos"
               description="Sua conexão é realizada de forma segura através do Open Finance."
             />
+          </Animated.View>
+        </Reanimated.View>
+      ) : restricted ? (
+        <Reanimated.View
+          entering={ENTER}
+          exiting={EXIT}
+        >
+          {/* Closed to new connections — explained, not silently removed */}
+          <Animated.View style={statusEntrance}>
+            <Surface variant="subtle" radius="panel" padding="xl">
+              <View style={[styles.emptyIcon, styles.emptyIconLocked]}>
+                <Ionicons
+                  name="lock-closed-outline"
+                  size={24}
+                  color={appColors.warning}
+                />
+              </View>
+
+              <AppText variant="section" tone="primary" style={styles.emptyTitle}>
+                O app segue completo
+              </AppText>
+              <AppText variant="bodySmall" tone="secondary" style={styles.emptyText}>
+                Registre transações, organize gastos recorrentes e crie metas
+                direto pelo Econva. Tudo funciona sem um banco conectado.
+              </AppText>
+
+              <Button
+                title="Voltar"
+                variant="secondary"
+                size="lg"
+                fullWidth
+                onPress={() => navigation.goBack()}
+                style={styles.emptyAction}
+              />
+            </Surface>
           </Animated.View>
         </Reanimated.View>
       ) : (
@@ -674,6 +769,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: appSpace.lg,
+  },
+
+  /** The same shape, told in the caution tone rather than the accent one. */
+  emptyIconLocked: {
+    backgroundColor: appColors.warningSubtle,
   },
 
   emptyTitle: {

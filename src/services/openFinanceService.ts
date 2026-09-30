@@ -117,6 +117,39 @@ export async function disconnectConnection(
     : { status: 'disconnected', connection: null };
 }
 
+/**
+ * Whether this account may start an Open Finance connection right now.
+ *
+ * The answer is decided on the server — the release switch and the addresses
+ * that are exempt live there — so no screen ever learns an address or holds a
+ * copy of the rule. The app only has to render what it says.
+ *
+ * A failed read is reported as `true`: being unable to reach the backend is
+ * an error state the caller already knows how to show, not a verdict about
+ * the feature.
+ */
+export async function getOpenFinanceStatus(
+  accessToken: string,
+): Promise<{ available: boolean }> {
+  const response = await fetch(
+    `${API_URL}/open-finance/status`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Erro ao verificar o Open Finance: ${response.status}`,
+    );
+  }
+
+  return response.json();
+}
+
 export async function getConnections(
   accessToken: string,
 ) {

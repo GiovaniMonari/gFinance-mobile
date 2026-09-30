@@ -24,7 +24,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { getAccessToken, getProfile, logout } from '../api/authApi';
-import { disconnectConnection, getConnections } from '../services/openFinanceService';
+import {
+  disconnectConnection,
+  getConnections,
+  getOpenFinanceStatus,
+} from '../services/openFinanceService';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { navigationRef } from '../navigation/navigationRef';
 import { AppLoading } from '../components/AppLoading';
@@ -56,6 +60,14 @@ export function ProfileScreen() {
   const [profileLoading, setProfileLoading] = useState(false);
 
   const [connection, setConnection] = useState<ActiveConnection | null>(null);
+
+  /**
+   * Whether the backend is letting this account begin a connection — `null`
+   * while it is unknown or could not be read. It is a separate question from
+   * the link above: the link says what has already happened, this says what
+   * may happen next.
+   */
+  const [bankAvailable, setBankAvailable] = useState<boolean | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -105,6 +117,27 @@ export function ProfileScreen() {
   }, []);
 
   /**
+   * The answer comes from the server, which is the only place the rule and
+   * the accounts it exempts live — so no screen ever learns an address or
+   * carries a copy of the restriction. An unread answer stays `null`: not
+   * knowing is not the same as being refused, and the section falls back to
+   * the ordinary row rather than announcing a limit it never confirmed.
+   */
+  const loadAvailability = useCallback(async () => {
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) return;
+
+      const status = await getOpenFinanceStatus(accessToken);
+
+      setBankAvailable(status.available);
+    } catch (error) {
+      console.error('ERRO AO VERIFICAR OPEN FINANCE:', error);
+      setBankAvailable(null);
+    }
+  }, []);
+
+  /**
    * `showLoader` covers the first read only. It owns the screen until the
    * profile and the connection are in, because the entrances wait on `loading`
    * — but a later focus is a refresh of content already on screen, and blanking
@@ -116,12 +149,16 @@ export function ProfileScreen() {
       if (showLoader) setLoading(true);
 
       try {
-        await Promise.all([loadProfile(), loadConnection()]);
+        await Promise.all([
+          loadProfile(),
+          loadConnection(),
+          loadAvailability(),
+        ]);
       } finally {
         if (showLoader) setLoading(false);
       }
     },
-    [loadProfile, loadConnection],
+    [loadProfile, loadConnection, loadAvailability],
   );
 
   /**
@@ -168,6 +205,13 @@ export function ProfileScreen() {
   });
 
   const connected = connection !== null;
+
+  /**
+   * Restricts starting a link, never keeping one — an account that already
+   * holds a connection is never told the feature is unavailable while it is
+   * visibly in use.
+   */
+  const restricted = !connected && bankAvailable === false;
 
   function confirmLogout() {
     if (loggingOut) return;
@@ -349,21 +393,45 @@ export function ProfileScreen() {
 
       {/* Bank link — a separate relationship, read fresh from the database */}
       <Animated.View style={[bankEntrance, styles.block]}>
-        <Section title="Conta bancária" eyebrow="Open Finance">
-          <ListRow
-            title={
-              connected ? 'Conta bancária conectada' : 'Conectar conta bancária'
-            }
-            meta={
-              connected
-                ? 'Sincronizada via Open Finance'
-                : 'Sincronize suas contas e transações'
-            }
-            icon={connected ? 'checkmark-circle' : 'card-outline'}
-            iconTone={connected ? 'positive' : 'accent'}
-            showChevron
-            onPress={() => navigation.navigate('ConnectBank')}
-          />
+        <Section
+          title="Conta bancária"
+          eyebrow="Open Finance"
+          description={
+            restricted
+              ? 'A conexão com o seu banco está temporariamente indisponível. Enquanto isso, o app segue completo: você registra transações, gastos recorrentes e metas direto por aqui.'
+              : undefined
+          }
+        >
+          {restricted ? (
+            /*
+             * Stated, not hidden. A feature that simply vanishes leaves the
+             * user wondering whether they broke something; this row and the
+             * line above say what is happening and what still works.
+             */
+            <ListRow
+              title="Open Finance indisponível"
+              meta="Disponível em breve"
+              icon="lock-closed-outline"
+              iconTone="warning"
+            />
+          ) : (
+            <ListRow
+              title={
+                connected
+                  ? 'Conta bancária conectada'
+                  : 'Conectar conta bancária'
+              }
+              meta={
+                connected
+                  ? 'Sincronizada via Open Finance'
+                  : 'Sincronize suas contas e transações'
+              }
+              icon={connected ? 'checkmark-circle' : 'card-outline'}
+              iconTone={connected ? 'positive' : 'accent'}
+              showChevron
+              onPress={() => navigation.navigate('ConnectBank')}
+            />
+          )}
           {connected ? (
             <ListRow
               title="Desconectar banco"

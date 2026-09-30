@@ -250,6 +250,27 @@ export function TransactionsScreen() {
               />
             )}
 
+            {/*
+             * Manual finance, stated where the user already works with
+             * movement: fixed monthly costs are a transaction that has not
+             * happened yet, so they live beside the transactions rather than
+             * behind a bank connection.
+             */}
+            <Section
+              title="Gastos recorrentes"
+              eyebrow="Automação"
+              style={styles.recurring}
+            >
+              <ListRow
+                title="Ver e gerenciar"
+                meta="Aluguel, assinaturas e contas fixas"
+                icon="repeat"
+                iconTone="accent"
+                showChevron
+                onPress={() => navigation.navigate('RecurringExpenses')}
+              />
+            </Section>
+
             <Section
               title="Movimentações"
               description={
@@ -367,6 +388,10 @@ const styles = StyleSheet.create({
 
   addButton: {
     marginBottom: appSpace.xl,
+  },
+
+  recurring: {
+    marginBottom: appSpace.xxl,
   },
 
   section: {

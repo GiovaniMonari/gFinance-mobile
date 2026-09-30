@@ -10,6 +10,8 @@ import { navigationRef } from './navigationRef'
 import { ConnectBankScreen } from '../screens/ConnectBankScreen'
 import { CreateGoalScreen } from '../screens/CreateGoalScreen'
 import { GoalDetailsScreen } from '../screens/GoalDetailsScreen'
+import { RecurringExpensesScreen } from '../screens/RecurringExpensesScreen'
+import { CreateRecurringExpenseScreen } from '../screens/CreateRecurringExpenseScreen'
 import { RegisterScreen } from '../screens/RegisterScreen'
 import { appColors } from '../theme/app'
 
@@ -31,6 +33,9 @@ export type RootStackParamList = {
   GoalDetails: {
     goalId: string
   }
+
+  RecurringExpenses: undefined
+  CreateRecurringExpense: undefined
 }
 
 const Stack =
@@ -139,6 +144,18 @@ export function AppNavigator() {
           name="GoalDetails"
           component={GoalDetailsScreen}
           options={detailScreenOptions}
+        />
+
+        <Stack.Screen
+          name="RecurringExpenses"
+          component={RecurringExpensesScreen}
+          options={appScreenOptions}
+        />
+
+        <Stack.Screen
+          name="CreateRecurringExpense"
+          component={CreateRecurringExpenseScreen}
+          options={appScreenOptions}
         />
       </Stack.Navigator>
     </NavigationContainer>
