@@ -603,20 +603,15 @@ export function DashboardScreen() {
           }
         >
           {openFinanceTransactions.length === 0 ? (
+            /*
+             * The way out for an account with no bank is the primary action
+             * below, and it is the only one: putting a second control here put
+             * two "Nova transação" buttons on one screen.
+             */
             <EmptyState
               icon="receipt-outline"
               title="Nenhuma transação"
               description="Suas movimentações aparecerão aqui."
-              /*
-               * Without a bank there is nothing to fill this section, so the
-               * way out has to be on the screen rather than one tab over.
-               */
-              actionLabel={!bankConnected ? 'Criar transação' : undefined}
-              onActionPress={
-                !bankConnected
-                  ? () => navigation.navigate('CreateTransaction')
-                  : undefined
-              }
             />
           ) : (
             <View>

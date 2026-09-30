@@ -273,10 +273,19 @@ export function TransactionsScreen() {
 
             <Section
               title="Movimentações"
+              /*
+               * Counted only when there is something to count. Leaving the
+               * "nenhuma movimentação" line here as well restated the empty
+               * state directly beneath it.
+               */
               description={
                 transactions.length === 0
-                  ? 'Nenhuma movimentação encontrada'
-                  : `${transactions.length} ${transactions.length === 1 ? 'movimentação' : 'movimentações'}`
+                  ? undefined
+                  : `${transactions.length} ${
+                      transactions.length === 1
+                        ? 'movimentação'
+                        : 'movimentações'
+                    }`
               }
               style={styles.section}
             />
@@ -292,12 +301,6 @@ export function TransactionsScreen() {
               openFinanceConnected
                 ? 'Não encontramos transações na conta conectada.'
                 : 'Suas transações aparecerão aqui assim que forem registradas.'
-            }
-            actionLabel={!openFinanceConnected ? 'Criar transação' : undefined}
-            onActionPress={
-              !openFinanceConnected
-                ? () => navigation.navigate('CreateTransaction')
-                : undefined
             }
           />
         }
