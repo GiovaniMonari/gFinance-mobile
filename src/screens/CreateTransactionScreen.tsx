@@ -1,398 +1,461 @@
-import { useCallback, useState } from 'react'
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-} from 'react-native'
-import type { TransactionType } from '../types/transaction'
-import { createTransaction } from '../api/transactionApi'
-import { getCategories, Category } from '../api/categoryApi'
-import { useFocusEffect } from '@react-navigation/native'
-import { useNavigation } from '@react-navigation/native'
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import type { RootStackParamList } from '../navigation/AppNavigator'
+/**
+ * Econva — Create Transaction
+ *
+ * A focused form in the product's language. The type selector is a segmented
+ * control rather than three competing buttons, categories are chips, and the
+ * action sits at the bottom of the scroll area.
+ *
+ * Validation, the API call, the success alert and navigation are unchanged.
+ */
 
-import { Ionicons } from '@expo/vector-icons'
+import { useCallback, useEffect, useState } from 'react';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import Reanimated, {
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import type { TransactionType } from '../types/transaction';
+import { createTransaction } from '../api/transactionApi';
+import { getCategories, Category } from '../api/categoryApi';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import {
+  appColors,
+  appMotion,
+  appMotionScale,
+  appRadius,
+  appSpace,
+} from '../theme/app';
+import { Button, Field, useEntrance } from '../components/ui';
+import {
+  AppHeader,
+  AppText,
+  ScrollScreen,
+  Section,
+  showAlert,
+  usePressScale,
+} from '../components/app';
+
+const TYPES: {
+  value: TransactionType;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+}[] = [
+  { value: 'EXPENSE', label: 'Despesa', icon: 'arrow-up' },
+  { value: 'INCOME', label: 'Receita', icon: 'arrow-down' },
+  { value: 'DEPOSIT', label: 'Depósito', icon: 'wallet' },
+];
+
+/**
+ * One segment of the type switcher.
+ *
+ * The selected state is drawn twice and crossfaded, because a background colour
+ * and a text colour cannot be interpolated through a plain prop. Selecting a
+ * type should feel like the choice moving, not like the screen repainting.
+ */
+function Segment({
+  label,
+  icon,
+  active,
+  onPress,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const selected = useSharedValue(active ? 1 : 0);
+  const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    selected.value = withTiming(active ? 1 : 0, {
+      duration: reducedMotion ? 0 : appMotion.state,
+    });
+  }, [active, reducedMotion, selected]);
+
+  const activeStyle = useAnimatedStyle(() => ({
+    opacity: selected.value,
+    transform: [{ scale: 0.9 + selected.value * 0.1 }],
+  }));
+
+  const {
+    style: pressStyle,
+    onPressIn,
+    onPressOut,
+  } = usePressScale({ scale: appMotionScale.control, dim: 0.75 });
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      style={styles.segment}
+    >
+      <Reanimated.View style={[styles.segmentActive, activeStyle]} pointerEvents="none" />
+
+      <Reanimated.View style={[styles.segmentContent, pressStyle]}>
+        <Ionicons name={icon} size={16} color={appColors.textTertiary} />
+        <AppText variant="captionStrong" tone="tertiary">
+          {label}
+        </AppText>
+
+        <Reanimated.View style={[styles.segmentLayer, activeStyle]} pointerEvents="none">
+          <Ionicons name={icon} size={16} color={appColors.accentBright} />
+          <AppText variant="captionStrong" color={appColors.accentBright}>
+            {label}
+          </AppText>
+        </Reanimated.View>
+      </Reanimated.View>
+    </Pressable>
+  );
+}
+
+/** One category option. Same crossfade as the segment, at chip scale. */
+function Chip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  const selected = useSharedValue(active ? 1 : 0);
+  const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    selected.value = withTiming(active ? 1 : 0, {
+      duration: reducedMotion ? 0 : appMotion.state,
+    });
+  }, [active, reducedMotion, selected]);
+
+  const activeStyle = useAnimatedStyle(() => ({
+    opacity: selected.value,
+  }));
+
+  const {
+    style: pressStyle,
+    onPressIn,
+    onPressOut,
+  } = usePressScale({ scale: appMotionScale.control, dim: 0.7 });
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={styles.chip}
+    >
+      <Reanimated.View style={[styles.chipActive, activeStyle]} pointerEvents="none" />
+
+      <Reanimated.View style={[styles.chipContent, pressStyle]}>
+        <AppText variant="captionStrong" tone="secondary">
+          {label}
+        </AppText>
+
+        <Reanimated.View style={[styles.chipLayer, activeStyle]} pointerEvents="none">
+          <AppText variant="captionStrong" color={appColors.accentBright}>
+            {label}
+          </AppText>
+        </Reanimated.View>
+      </Reanimated.View>
+    </Pressable>
+  );
+}
 
 export function CreateTransactionScreen() {
-  const [amount, setAmount] = useState('')
-  const [description, setDescription] = useState('')
-  const [transactionType, setTransactionType] = useState<TransactionType>('EXPENSE')
-  const [loading, setLoading] = useState(false)
-  const [categories, setCategories] = useState<Category[]>([])
-  const [categoryId, setCategoryId] = useState<string>('')
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [transactionType, setTransactionType] =
+    useState<TransactionType>('EXPENSE');
+  const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoryId, setCategoryId] = useState<string>('');
 
-    const loadCategories = useCallback(async () => {
-        try {
-            const data = await getCategories()
+  const loadCategories = useCallback(async () => {
+    try {
+      const data = await getCategories();
+      setCategories(data);
+    } catch (error) {
+      console.error('Erro ao buscar categorias:', error);
+    }
+  }, []);
 
-            setCategories(data)
-        } catch (error) {
-            console.error('Erro ao buscar categorias:', error)
-        }
-    }, [])
+  useFocusEffect(
+    useCallback(() => {
+      loadCategories();
+    }, [loadCategories]),
+  );
 
-    useFocusEffect(
-        useCallback(() => {
-            loadCategories()
-        }, [loadCategories]),
-    )
-
-    const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>()
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
   async function handleCreate() {
     if (!amount) {
-        Alert.alert('Atenção', 'Informe o valor da transação.')
-        return
+      showAlert({
+        title: 'Atenção',
+        message: 'Informe o valor da transação.',
+        tone: 'warning',
+      });
+      return;
     }
 
     try {
-        setLoading(true)
+      setLoading(true);
+      const normalizedAmount = Number(amount.replace(',', '.'));
+      if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+        showAlert({
+          title: 'Atenção',
+          message: 'Informe um valor válido.',
+          tone: 'warning',
+        });
+        return;
+      }
+      if (transactionType === 'EXPENSE' && !categoryId) {
+        showAlert({
+          title: 'Atenção',
+          message: 'Selecione uma categoria para a despesa.',
+          tone: 'warning',
+        });
+        return;
+      }
 
-        const normalizedAmount = Number(
-        amount.replace(',', '.'),
-        )
+      await createTransaction({
+        amount: normalizedAmount,
+        transactionType,
+        description: description || undefined,
+        categoryId: categoryId || undefined,
+      });
 
-        if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-        Alert.alert('Atenção', 'Informe um valor válido.')
-        return
-        }
+      setAmount('');
+      setDescription('');
+      setCategoryId('');
+      setTransactionType('EXPENSE');
 
-        if (transactionType === 'EXPENSE' && !categoryId) {
-            Alert.alert(
-                'Atenção',
-                'Selecione uma categoria para a despesa.',
-            )
-            return
-        }
-
-        await createTransaction({
-            amount: normalizedAmount,
-            transactionType,
-            description: description || undefined,
-            categoryId: categoryId || undefined,
-        })
-
-        setAmount('')
-        setDescription('')
-        setCategoryId('')
-        setTransactionType('EXPENSE')
-
-        Alert.alert(
-            'Sucesso',
-            'Transação criada com sucesso.',
-            [
-                {
-                text: 'OK',
-                onPress: () => navigation.goBack(),
-                },
-            ],
-        )
+      showAlert({
+        title: 'Sucesso',
+        message: 'Transação criada com sucesso.',
+        tone: 'success',
+        actions: [
+          { label: 'OK', onPress: () => navigation.goBack() },
+        ],
+      });
     } catch (error) {
-        Alert.alert(
-        'Erro',
-        error instanceof Error
+      showAlert({
+        title: 'Erro',
+        message:
+          error instanceof Error
             ? error.message
             : 'Não foi possível criar a transação.',
-        )
+        tone: 'danger',
+      });
     } finally {
-        setLoading(false)
+      setLoading(false);
     }
-    }
+  }
 
-return (
-    <View style={styles.container}>
-        <Text style={styles.title}>Nova transação</Text>
+  const formEntrance = useEntrance();
+  const actionEntrance = useEntrance({ delay: appMotion.stagger });
 
-        <Text style={styles.label}>Valor</Text>
+  return (
+    <ScrollScreen topInset={false}>
+      <AppHeader
+        title="Nova transação"
+        onBackPress={() => navigation.goBack()}
+      />
 
-        <TextInput
-            style={styles.input}
-            placeholder="R$ 0,00"
+      <Animated.View style={formEntrance}>
+        {/* Segmented control */}
+        <View style={styles.segmented}>
+          {TYPES.map((type) => (
+            <Segment
+              key={type.value}
+              label={type.label}
+              icon={type.icon}
+              active={transactionType === type.value}
+              onPress={() => {
+                Haptics.selectionAsync();
+                setTransactionType(type.value);
+                setCategoryId('');
+              }}
+            />
+          ))}
+        </View>
+
+        {/* Fields */}
+        <Section title="Detalhes" eyebrow="Transação">
+          <Field
+            label="Valor"
+            placeholder="0,00"
+            icon="cash-outline"
             keyboardType="decimal-pad"
             value={amount}
             onChangeText={setAmount}
-        />
+          />
 
-        <Text style={styles.label}>Descrição</Text>
+          <Field
+            label="Descrição"
+            placeholder="Ex.: Mercado"
+            icon="document-text-outline"
+            value={description}
+            onChangeText={setDescription}
+            flush={transactionType !== 'EXPENSE'}
+          />
 
-        <TextInput
-        style={styles.input}
-        placeholder="Ex.: Mercado"
-        value={description}
-        onChangeText={setDescription}
-        />
+          {transactionType === 'EXPENSE' ? (
+            <View style={styles.categorySection}>
+              <AppText variant="label" tone="secondary" style={styles.categoryLabel}>
+                Categoria
+              </AppText>
 
-        <Text style={styles.label}>Tipo</Text>
+              <View style={styles.categoryChips}>
+                {categories.map((category) => {
+                  const active = categoryId === category.id;
 
-        <View style={styles.typeContainer}>
-        <TouchableOpacity
-            style={[
-            styles.typeButton,
-            transactionType === 'EXPENSE' &&
-                styles.typeButtonActive,
-            ]}
-            onPress={() => setTransactionType('EXPENSE')}
-        >
-            <Ionicons
-                name="arrow-down-outline"
-                size={20}
-                color={
-                    transactionType === 'EXPENSE'
-                    ? '#fff'
-                    : '#555'
-                }
-                />
-
-                <Text
-                style={[
-                    styles.typeButtonText,
-                    transactionType === 'EXPENSE' &&
-                    styles.typeButtonTextActive,
-                ]}
-                >
-                Despesa
-                </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-            style={[
-            styles.typeButton,
-            transactionType === 'INCOME' &&
-                styles.typeButtonActive,
-            ]}
-           onPress={() => {
-            setTransactionType('INCOME')
-            setCategoryId('')
-            }}
-        >
-            <Ionicons
-                name="arrow-up-outline"
-                size={20}
-                color={
-                    transactionType === 'INCOME'
-                    ? '#fff'
-                    : '#555'
-                }
-                />
-
-                <Text
-                style={[
-                    styles.typeButtonText,
-                    transactionType === 'INCOME' &&
-                    styles.typeButtonTextActive,
-                ]}
-                >
-                Receita
-                </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-            style={[
-            styles.typeButton,
-            transactionType === 'DEPOSIT' &&
-                styles.typeButtonActive,
-            ]}
-            onPress={() => {
-            setTransactionType('DEPOSIT')
-            setCategoryId('')
-            }}
-        >
-            <Ionicons
-                name="wallet-outline"
-                size={20}
-                color={
-                    transactionType === 'DEPOSIT'
-                    ? '#fff'
-                    : '#555'
-                }
-                />
-
-                <Text
-                style={[
-                    styles.typeButtonText,
-                    transactionType === 'DEPOSIT' &&
-                    styles.typeButtonTextActive,
-                ]}
-                >
-                Depósito
-                </Text>
-        </TouchableOpacity>
-        </View>
-
-        {transactionType === 'EXPENSE' && (
-        <>
-            <Text style={styles.label}>Categoria</Text>
-
-            <View style={styles.categoryContainer}>
-            {categories.map((category) => (
-                <TouchableOpacity
-                key={category.id}
-                style={[
-                    styles.categoryButton,
-                    categoryId === category.id &&
-                    styles.categoryButtonActive,
-                ]}
-                onPress={() => setCategoryId(category.id)}
-                >
-                <>
-                <Ionicons
-                    name="pricetag-outline"
-                    size={18}
-                    color={
-                    categoryId === category.id
-                        ? '#fff'
-                        : '#555'
-                    }
-                />
-
-                <Text
-                    style={[
-                    styles.categoryButtonText,
-                    categoryId === category.id &&
-                        styles.categoryButtonTextActive,
-                    ]}
-                >
-                    {category.name}
-                </Text>
-                </>
-                </TouchableOpacity>
-            ))}
+                  return (
+                    <Chip
+                      key={category.id}
+                      label={category.name}
+                      active={active}
+                      onPress={() => {
+                        Haptics.selectionAsync();
+                        setCategoryId(category.id);
+                      }}
+                    />
+                  );
+                })}
+              </View>
             </View>
-        </>
-        )}
+          ) : null}
+        </Section>
+      </Animated.View>
 
-        <TouchableOpacity
-            style={styles.button}
-            onPress={handleCreate}
-            disabled={loading}
-            >
-            {!loading && (
-                <Ionicons
-                name="add-circle-outline"
-                size={22}
-                color="#fff"
-                />
-            )}
-
-            <Text style={styles.buttonText}>
-                {loading
-                ? 'Adicionando...'
-                : 'Adicionar transação'}
-            </Text>
-        </TouchableOpacity>
-    </View>
-    )
+      <Animated.View style={[actionEntrance, styles.action]}>
+        <Button
+          title={loading ? 'Adicionando...' : 'Adicionar transação'}
+          onPress={handleCreate}
+          loading={loading}
+          size="lg"
+          fullWidth
+        />
+      </Animated.View>
+    </ScrollScreen>
+  );
 }
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: '#fff',
-  },
-
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 32,
-  },
-
-  label: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-
-  input: {
-    height: 52,
+  /* Segmented control */
+  segmented: {
+    flexDirection: 'row',
+    gap: appSpace.xs,
+    padding: appSpace.xs,
+    borderRadius: appRadius.field,
+    backgroundColor: appColors.surface,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    marginBottom: 20,
+    borderColor: appColors.border,
+    marginBottom: appSpace.xxl,
   },
 
-  button: {
-    height: 52,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#111',
-    flexDirection: 'row',
-    gap: 8,
-    },
-
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  typeContainer: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 24,
-    },
-
-    typeButton: {
+  segment: {
     flex: 1,
-    height: 44,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
+    height: 40,
+    borderRadius: appRadius.md,
+  },
+
+  /** The selected ground, fading in behind the segment's own content. */
+  segmentActive: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: appRadius.md,
+    backgroundColor: appColors.accentWash,
+  },
+
+  segmentContent: {
     flexDirection: 'row',
-    gap: 6,
-    },
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: appSpace.xs,
+    height: '100%',
+  },
 
-    typeButtonActive: {
-    backgroundColor: '#111',
-    borderColor: '#111',
-    },
+  segmentLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: appSpace.xs,
+  },
 
-    typeButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#555',
-    },
+  /* Category */
+  categorySection: {
+    marginTop: appSpace.lg,
+  },
 
-    typeButtonTextActive: {
-    color: '#fff',
-    },
-    categoryContainer: {
+  categoryLabel: {
+    marginBottom: appSpace.sm,
+  },
+
+  categoryChips: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 24,
-    },
+    gap: appSpace.sm,
+  },
 
-    categoryButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  chip: {
+    paddingHorizontal: appSpace.lg,
+    height: 36,
+    borderRadius: appRadius.md,
+    backgroundColor: appColors.surface,
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 10,
-    flexDirection: 'row',
+    borderColor: appColors.border,
+    overflow: 'hidden',
+  },
+
+  chipActive: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: appColors.accentWash,
+    borderRadius: appRadius.md,
+    borderWidth: 1,
+    borderColor: appColors.borderAccentStrong,
+  },
+
+  chipContent: {
     alignItems: 'center',
-    gap: 6,
-    },
+    justifyContent: 'center',
+    height: '100%',
+  },
 
-    categoryButtonActive: {
-    backgroundColor: '#111',
-    borderColor: '#111',
-    },
+  chipLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 
-    categoryButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#555',
-    },
-
-    categoryButtonTextActive: {
-    color: '#fff',
-    },
-})
+  /* Action */
+  action: {
+    marginTop: appSpace.xl,
+  },
+});

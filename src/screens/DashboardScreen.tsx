@@ -1,1274 +1,705 @@
+/**
+ * Econva — Dashboard
+ *
+ * The central expression of the brand: one dominant number, then a calm
+ * hierarchy of context, movement and intent. The balance owns the top of the
+ * screen at display scale; everything after it is deliberately quieter.
+ *
+ * Layout intent:
+ *   1  greeting + brand      context
+ *   2  balance                the single most important figure
+ *   3  income / expenses      direction, side by side
+ *   4  income analysis        how much of the month is committed
+ *   5  insight                one sentence, no chart theatre
+ *   6  recent transactions    a list, not a grid of cards
+ *   7  primary action         only when the user has no bank connected
+ *
+ * Data, calculations and navigation are unchanged from the previous version.
+ */
 
-import { useFocusEffect } from '@react-navigation/native'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Animated, StyleSheet, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+
+import { AppLoading } from '../components/AppLoading';
+import { formatCurrency } from '../utils/formatCurrency';
+import { getTransactions } from '../api/transactionApi';
+import { getFinance } from '../api/financeApi';
+import { getCategories } from '../api/categoryApi';
+import { calculateTotals } from '../utils/finance';
+import { Finance } from '../types/finance';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-} from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import { useNavigation } from '@react-navigation/native'
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import { AppLoading } from '../components/AppLoading'
-import { formatCurrency } from '../utils/formatCurrency'
-import { getTransactions } from '../api/transactionApi'
-import { getFinance } from '../api/financeApi'
-import { calculateTotals } from '../utils/finance'
-import { Finance } from '../types/finance'
-import { formatTransactionStatus } from '../utils/transaction'
-import type { RootStackParamList } from '../navigation/AppNavigator'
-
+  formatTransactionStatus,
+  translateCategory,
+} from '../utils/transaction';
 import {
   getConnections,
   getAccounts,
   getTransactions as getOpenFinanceTransactions,
-} from '../services/openFinanceService'
-
-import { getAccessToken } from '../api/authApi'
+} from '../services/openFinanceService';
+import { getAccessToken } from '../api/authApi';
+import { appColors, appSpace, appMotion } from '../theme/app';
+import { Button, Logo, useEntrance } from '../components/ui';
+import {
+  AppText,
+  CategoryShare,
+  EmptyState,
+  ListRow,
+  ScrollScreen,
+  Section,
+  Stat,
+  StatGrid,
+  Surface,
+  showAlert,
+  type CategoryShareRow,
+} from '../components/app';
 
 type OpenFinanceTransaction = {
-  id: string
-  description: string
-  amount: number
-  date: string
-  category: string | null
-  type: 'DEBIT' | 'CREDIT'
-  status: string
-}
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  category: string | null;
+  type: 'DEBIT' | 'CREDIT';
+  status: string;
+};
 
 type DashboardTransaction = {
-  id: string
-  description: string
-  amount: number
-  date: string
-  category: string | null
-  type: 'EXPENSE' | 'INCOME'
-  status: string
-}
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  category: string | null;
+  type: 'EXPENSE' | 'INCOME';
+  status: string;
+};
 
 export function DashboardScreen() {
-  const [finance, setFinance] = useState<Finance | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  const [totals, setTotals] = useState({
-    expenses: 0,
-    income: 0,
-  })
-
-  const [openFinanceBalance, setOpenFinanceBalance] =
-    useState<number | null>(null)
-
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [finance, setFinance] = useState<Finance | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [totals, setTotals] = useState({ expenses: 0, income: 0 });
+  const [openFinanceBalance, setOpenFinanceBalance] = useState<number | null>(null);
   const [financialAnalysis, setFinancialAnalysis] = useState({
     expensePercentage: 0,
     savingsPercentage: 0,
     savings: 0,
     mainCategory: null as string | null,
     mainCategoryAmount: 0,
-  })
+    /**
+     * Everything the category ranking counted, which is not the same as
+     * `totals.expenses`: totals drop anything not yet settled, the ranking
+     * counts it. Each category's share divides by this so numerator and
+     * denominator cover the same money.
+     */
+    categoryTotal: 0,
+    /**
+     * The categories themselves, largest first — the same sort that picks
+     * `mainCategory`, kept whole so the dashboard can show what sits behind
+     * the top figure and not only the top figure.
+     */
+    categoryRanking: [] as { name: string; amount: number }[],
+  });
+  const [openFinanceTransactions, setOpenFinanceTransactions] = useState<DashboardTransaction[]>([]);
 
-  const [openFinanceTransactions, setOpenFinanceTransactions] =
-    useState<DashboardTransaction[]>([])
+  /**
+   * Whether a bank is connected — deliberately not derived from
+   * `openFinanceBalance`. A link made moments ago reports no account yet, and
+   * the screen still has to present it as connected instead of asking the
+   * user to connect the account they just connected.
+   */
+  const [bankConnected, setBankConnected] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      async function loadFinance() {
+  /**
+   * The alert's "Tentar novamente" is built inside `loadFinance`, which
+   * cannot reference itself — so the current load is kept here for that button
+   * to call. Kept in sync by an effect, where the latest version of a
+   * callback belongs, well before any alert can be on screen.
+   */
+  const reloadRef = useRef<() => void>(() => {});
+
+  /**
+   * Local (manually entered) transactions: the list, the totals and the
+   * category ranking behind them.
+   *
+   * Its own stage because the dashboard reads it twice over — as the whole
+   * story when nothing is connected, and as the fallback when the bank side
+   * cannot be read. Collapsing the two into one chain is what used to blank
+   * the screen the moment a single request failed.
+   */
+  const loadLocalData = useCallback(async () => {
+    const transactionsData = await getTransactions();
+    setOpenFinanceTransactions(
+      transactionsData.map((t) => ({
+        id: t.id,
+        description: t.description,
+        amount: Number(t.amount),
+        date: t.createdAt,
+        category: null,
+        type: t.type === 'EXPENSE' ? 'EXPENSE' : 'INCOME',
+        status: t.status,
+      })),
+    );
+    const calculatedTotals = calculateTotals(transactionsData);
+    setTotals(calculatedTotals);
+
+    // Category names live behind an id, so the ranking has to be keyed
+    // on the name the reader actually sees. Rolling up on the raw id
+    // would report every category as its own uuid.
+    let categoryNames: Record<string, string> = {};
+    try {
+      const categories = await getCategories();
+      categoryNames = Object.fromEntries(
+        categories.map((c) => [c.id, c.name]),
+      );
+    } catch (error) {
+      console.error('Erro ao buscar categorias:', error);
+    }
+
+    const categoryTotals: Record<string, number> = {};
+    let categoryTotal = 0;
+    transactionsData.forEach((t) => {
+      if (t.type !== 'EXPENSE') return;
+      const name = t.categoryId ? categoryNames[t.categoryId] : undefined;
+      const cat = name ?? 'Sem categoria';
+      const amount = Number(t.amount);
+      categoryTotals[cat] = (categoryTotals[cat] ?? 0) + amount;
+      categoryTotal += amount;
+    });
+    const ranking = Object.entries(categoryTotals).sort(
+      ([, a], [, b]) => b - a,
+    );
+    const mainCategory = ranking[0];
+    setFinancialAnalysis({
+      expensePercentage: calculatedTotals.income > 0 ? (calculatedTotals.expenses / calculatedTotals.income) * 100 : 0,
+      savingsPercentage: calculatedTotals.income > 0 ? ((calculatedTotals.income - calculatedTotals.expenses) / calculatedTotals.income) * 100 : 0,
+      savings: calculatedTotals.income - calculatedTotals.expenses,
+      mainCategory: mainCategory?.[0] ?? null,
+      mainCategoryAmount: mainCategory?.[1] ?? 0,
+      categoryTotal,
+      categoryRanking: ranking.map(([name, amount]) => ({
+        name,
+        amount,
+      })),
+    });
+  }, []);
+
+  /**
+   * The bank's balance, totals, ranking and list.
+   *
+   * Returns `false` — deliberately distinct from throwing — when the
+   * connection exists but the provider has no account for it yet. A link made
+   * seconds ago simply has nothing to report; that is a state to render, not
+   * a failure to surface, so the caller falls back to local data instead of
+   * leaving an empty dashboard behind.
+   */
+  const loadBankData = useCallback(
+    async (connectionId: string, token: string) => {
+      const accountsResponse = await getAccounts(token, connectionId);
+      const account = accountsResponse.accounts?.[0];
+
+      if (!account) return false;
+
+      const bankBalance = account.balance ?? null;
+      const transactionsResponse = await getOpenFinanceTransactions(
+        token,
+        connectionId,
+        account.id,
+      );
+      const bankTransactions: OpenFinanceTransaction[] =
+        transactionsResponse.transactions ?? [];
+      const income = bankTransactions
+        .filter((t) => t.type === 'CREDIT')
+        .reduce((sum, t) => sum + t.amount, 0);
+      const expenses = bankTransactions
+        .filter((t) => t.type === 'DEBIT')
+        .reduce((sum, t) => sum + t.amount, 0);
+
+      setTotals({ income, expenses });
+
+      // Spending without a category still has to be counted, otherwise
+      // the ranking silently drops part of what was spent.
+      const categoryTotals: Record<string, number> = {};
+      let categoryTotal = 0;
+      bankTransactions.forEach((t) => {
+        if (t.type === 'DEBIT') {
+          const cat = translateCategory(t.category);
+          categoryTotals[cat] = (categoryTotals[cat] ?? 0) + t.amount;
+          categoryTotal += t.amount;
+        }
+      });
+      const ranking = Object.entries(categoryTotals).sort(
+        ([, a], [, b]) => b - a,
+      );
+      const mainCategory = ranking[0];
+
+      // Available money is what the bank actually reports. Deriving it
+      // from income minus expenses ignores transfers, pending items and
+      // anything else between the two figures.
+      const available = bankBalance ?? (income - expenses);
+
+      setFinancialAnalysis({
+        expensePercentage: income > 0 ? (expenses / income) * 100 : 0,
+        savingsPercentage: income > 0 ? (available / income) * 100 : 0,
+        savings: available,
+        mainCategory: mainCategory?.[0] ?? null,
+        mainCategoryAmount: mainCategory?.[1] ?? 0,
+        categoryTotal,
+        categoryRanking: ranking.map(([name, amount]) => ({
+          name,
+          amount,
+        })),
+      });
+
+      setOpenFinanceTransactions(
+        bankTransactions.map((t) => ({
+          id: t.id,
+          description: t.description,
+          amount: t.amount,
+          date: t.date,
+          category: translateCategory(t.category),
+          type: t.type === 'DEBIT' ? 'EXPENSE' : 'INCOME',
+          status: t.status,
+        })),
+      );
+
+      // Published only now that the whole read completed: a balance sitting
+      // above totals that never arrived would put two sources of money on
+      // the same screen.
+      setOpenFinanceBalance(bankBalance);
+
+      return true;
+    },
+    [],
+  );
+
+  const loadFinance = useCallback(async () => {
+    setLoading(true);
+
+    // Cleared for every load so a failed or still-synchronising read cannot
+    // leave last time's bank balance sitting above this time's local figures.
+    // The loader covers the screen while it is null, so nothing flickers.
+    setOpenFinanceBalance(null);
+
+    /**
+     * One dialog for the whole load. Each stage records why it could not
+     * contribute and the screen reports the first of those once at the end:
+     * several failing requests must not stack several alerts, and a stage
+     * that quietly fell back to other data must not speak for one that did not.
+     */
+    const problems: { title: string; message: string }[] = [];
+
+    /** The local read, wherever it is reached from — one failure, one entry. */
+    const readLocal = async () => {
+      try {
+        await loadLocalData();
+      } catch (error) {
+        console.error('Erro ao buscar transações:', error);
+        problems.push({
+          title: 'Não foi possível carregar suas transações',
+          message:
+            'Suas movimentações não responderam. Verifique sua conexão e tente novamente.',
+        });
+      }
+    };
+
+    // 1 — the account every other query is scoped by. Categories, goals and
+    // transaction writes all resolve it first and answer 404 without it, so
+    // nothing below is worth attempting until this has landed.
+    let ready = false;
+    try {
+      const data = await getFinance();
+      setFinance(data);
+      ready = true;
+    } catch (error) {
+      console.error('Erro ao buscar finanças:', error);
+      problems.push({
+        title: 'Sua conta ainda não está pronta',
+        message:
+          'Não foi possível preparar seus dados financeiros. Verifique sua conexão e tente novamente.',
+      });
+    }
+
+    if (ready) {
+      // 2 — is a bank connected? Reported rather than swallowed: without it
+      // the screen would confidently present a disconnected account to
+      // somebody who has just connected one.
+      let connection: { id: string } | null = null;
+      const token = await getAccessToken().catch(() => null);
+
+      if (token) {
         try {
-          const data = await getFinance()
-
-          const accessToken = await getAccessToken()
-
-          const connectionsResponse = accessToken
-            ? await getConnections(accessToken)
-            : null
-
-          const connected = connectionsResponse?.connections?.[0]
-
-          if (connected && accessToken) {
-            const accountsResponse = await getAccounts(
-              accessToken,
-              connected.id,
-            )
-
-            const account = accountsResponse.accounts?.[0]
-
-            if (account) {
-              setOpenFinanceBalance(account.balance ?? null)
-
-              const transactionsResponse =
-                await getOpenFinanceTransactions(
-                  accessToken,
-                  connected.id,
-                  account.id,
-                )
-
-              const bankTransactions: OpenFinanceTransaction[] =
-                transactionsResponse.transactions ?? []
-
-              const income = bankTransactions
-                .filter(
-                  (transaction) => transaction.type === 'CREDIT',
-                )
-                .reduce(
-                  (total, transaction) => total + transaction.amount,
-                  0,
-                )
-
-              const expenses = bankTransactions
-                .filter(
-                  (transaction) => transaction.type === 'DEBIT',
-                )
-                .reduce(
-                  (total, transaction) => total + transaction.amount,
-                  0,
-                )
-
-              setTotals({
-                income,
-                expenses,
-              })
-
-              const categoryTotals: Record<string, number> = {}
-
-              bankTransactions.forEach((transaction) => {
-                if (
-                  transaction.type === 'DEBIT' &&
-                  transaction.category
-                ) {
-                  categoryTotals[transaction.category] =
-                    (categoryTotals[transaction.category] ?? 0) +
-                    transaction.amount
-                }
-              })
-
-              const mainCategory = Object.entries(categoryTotals)
-                .sort(([, a], [, b]) => b - a)[0]
-
-              setFinancialAnalysis({
-                expensePercentage:
-                  income > 0 ? (expenses / income) * 100 : 0,
-
-                savingsPercentage:
-                  income > 0
-                    ? ((income - expenses) / income) * 100
-                    : 0,
-
-                savings: income - expenses,
-
-                mainCategory: mainCategory?.[0] ?? null,
-
-                mainCategoryAmount: mainCategory?.[1] ?? 0,
-              })
-
-              setOpenFinanceTransactions(
-                bankTransactions.map((transaction) => ({
-                  id: transaction.id,
-                  description: transaction.description,
-                  amount: transaction.amount,
-                  date: transaction.date,
-                  category: transaction.category,
-                  type:
-                    transaction.type === 'DEBIT'
-                      ? 'EXPENSE'
-                      : 'INCOME',
-                  status: transaction.status,
-                })),
-              )
-            }
-          }
-
-          if (!connected) {
-            const transactionsData = await getTransactions()
-
-            setOpenFinanceTransactions(
-              transactionsData.map((transaction) => ({
-                id: transaction.id,
-                description: transaction.description,
-                amount: Number(transaction.amount),
-                date: transaction.createdAt,
-                category: null,
-                type:
-                  transaction.type === 'EXPENSE'
-                    ? 'EXPENSE'
-                    : 'INCOME',
-                status: transaction.status,
-              })),
-            )
-
-            const calculatedTotals = calculateTotals(
-              transactionsData,
-            )
-
-            setTotals(calculatedTotals)
-
-            const categoryTotals: Record<string, number> = {}
-
-            transactionsData.forEach((transaction) => {
-              if (transaction.type === 'EXPENSE') {
-                const category =
-                  transaction.categoryId ?? 'Sem categoria'
-
-                categoryTotals[category] =
-                  (categoryTotals[category] ?? 0) +
-                  Number(transaction.amount)
-              }
-            })
-
-            const mainCategory = Object.entries(categoryTotals)
-              .sort(([, a], [, b]) => b - a)[0]
-
-            setFinancialAnalysis({
-              expensePercentage:
-                calculatedTotals.income > 0
-                  ? (calculatedTotals.expenses /
-                      calculatedTotals.income) *
-                    100
-                  : 0,
-
-              savingsPercentage:
-                calculatedTotals.income > 0
-                  ? ((calculatedTotals.income -
-                      calculatedTotals.expenses) /
-                      calculatedTotals.income) *
-                    100
-                  : 0,
-
-              savings:
-                calculatedTotals.income -
-                calculatedTotals.expenses,
-
-              mainCategory: mainCategory?.[0] ?? null,
-
-              mainCategoryAmount:
-                mainCategory?.[1] ?? 0,
-            })
-          }
-
-          setFinance(data)
+          const connectionsResponse = await getConnections(token);
+          connection = connectionsResponse?.connections?.[0] ?? null;
         } catch (error) {
-          console.error('Erro ao buscar finanças:', error)
-        } finally {
-          setLoading(false)
+          console.error('Erro ao buscar conexões:', error);
+          problems.push({
+            title: 'Não foi possível verificar suas contas',
+            message:
+              'Suas conexões bancárias não responderam. Tente novamente em instantes.',
+          });
         }
       }
 
-      loadFinance()
-    }, []),
-  )
+      // Being connected and holding a balance are different facts. A link
+      // with no account yet is still a link, so the screen has to say
+      // "connected" while showing nothing from the bank.
+      setBankConnected(Boolean(connection));
 
-  const balance =
-    openFinanceBalance ?? totals.income - totals.expenses
+      // 3 — the bank's data. A failure here falls through to stage 4 instead
+      // of aborting the load, which is what used to blank the dashboard.
+      if (connection && token) {
+        try {
+          const loaded = await loadBankData(connection.id, token);
+          if (!loaded) {
+            // Connected, synchronising. Local data is the honest answer
+            // until the provider returns an account.
+            await readLocal();
+          }
+        } catch (error) {
+          console.error('Erro ao buscar dados do banco:', error);
+          problems.push({
+            title: 'Não foi possível carregar seu banco',
+            message:
+              'As movimentações da sua conta conectada não chegaram. Tente novamente em instantes.',
+          });
+          await readLocal();
+        }
+      } else if (!connection) {
+        // 4 — local data is the whole story when nothing is connected.
+        await readLocal();
+      }
+    }
 
-  const navigation =
-    useNavigation<
-      NativeStackNavigationProp<RootStackParamList>
-    >()
+    setLoading(false);
 
-  const isPositive = balance >= 0
+    if (problems.length > 0) {
+      const [first] = problems;
+      showAlert({
+        title: first.title,
+        message: first.message,
+        tone: 'danger',
+        actions: [
+          {
+            label: 'Tentar novamente',
+            style: 'primary',
+            onPress: () => reloadRef.current(),
+          },
+          { label: 'Fechar', style: 'secondary' },
+        ],
+      });
+    }
+  }, [loadLocalData, loadBankData]);
+
+  useEffect(() => {
+    reloadRef.current = loadFinance;
+  }, [loadFinance]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadFinance();
+    }, [loadFinance]),
+  );
+
+  const balance = openFinanceBalance ?? totals.income - totals.expenses;
+  const navigation = useNavigation<any>();
+  const isPositive = balance >= 0;
+
+  const hasCategoryAnalysis =
+    Boolean(financialAnalysis.mainCategory) && financialAnalysis.categoryTotal > 0;
+
+  /**
+   * What each category cost, as a share of all spending.
+   *
+   * Divided by the same total the ranking accumulated, not by `totals.expenses`:
+   * totals exclude anything still pending while the ranking includes it, so
+   * mixing the two could report a category as more than 100% of spending.
+   */
+  const categoryShares: CategoryShareRow[] = hasCategoryAnalysis
+    ? financialAnalysis.categoryRanking.map((row) => ({
+        ...row,
+        share: (row.amount / financialAnalysis.categoryTotal) * 100,
+      }))
+    : [];
 
   const insightText = financialAnalysis.mainCategory
-      ? `Seus maiores gastos estão em ${financialAnalysis.mainCategory}.`
-      : 'Adicione transações para receber uma análise financeira.'
+    ? `Seus maiores gastos estão em ${financialAnalysis.mainCategory}.`
+    : 'Adicione transações para receber uma análise financeira.';
 
-    if (loading) {
-    return (
-      <AppLoading
-        message="Preparando seu resumo"
-        description="Buscando seus dados financeiros"
-      />
-    )
+  /*
+   * The loader owns the screen until the data lands, so every entrance is held
+   * back until then. Ungated, these run the moment the screen mounts — against
+   * `AppLoading` — and are long finished by the time this content appears,
+   * which is why the dashboard used to arrive with a hard cut instead of a
+   * stagger.
+   */
+  const contentReady = !loading;
+
+  const headerEntrance = useEntrance({ start: contentReady });
+  const balanceEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger,
+  });
+  const statsEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger * 2,
+  });
+  const analysisEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger * 3,
+  });
+  const listEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger * 5,
+  });
+
+  if (loading) {
+    return <AppLoading message="Preparando seu resumo" description="Buscando seus dados financeiros" />;
   }
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.contentContainer}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* HEADER */}
-
-      <View style={styles.header}>
-        <View style={styles.brandArea}>
-          <Image
-            source={require('../../assets/logogFinance.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-
-          <View>
-            <Text style={styles.greeting}>Olá</Text>
-            <Text style={styles.headerSubtitle}>
-              Sua vida financeira, em um só lugar.
-            </Text>
-          </View>
+    <ScrollScreen tabBar>
+      {/* 1 — Context */}
+      <Animated.View style={[styles.header, headerEntrance]}>
+        <Logo variant="mark" size={34} />
+        <View style={styles.headerText}>
+          <AppText variant="micro" tone="tertiary">
+            Econva
+          </AppText>
+          <AppText variant="bodySemibold" tone="primary">
+            Olá
+          </AppText>
         </View>
+      </Animated.View>
 
-        <TouchableOpacity style={styles.headerButton}>
-          <Ionicons
-            name="notifications-outline"
-            size={21}
-            color="#101828"
-          />
-        </TouchableOpacity>
-      </View>
+      {/* 2 — Balance */}
+      <Animated.View style={balanceEntrance}>
+        <Surface variant="elevated" radius="panel" padding="xl" style={styles.balance}>
+          <View style={styles.balanceTop}>
+            <AppText variant="micro" tone="tertiary">
+              SALDO TOTAL
+            </AppText>
 
-      {/* TITLE */}
-
-      <View style={styles.titleArea}>
-        <Text style={styles.title}>Visão geral</Text>
-
-        {openFinanceBalance !== null && (
-          <View style={styles.connectedBadge}>
-            <View style={styles.connectedDot} />
-
-            <Text style={styles.connectedText}>
-              Conta conectada
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* BALANCE */}
-
-      <View style={styles.balanceCard}>
-        <View style={styles.balanceTop}>
-          <Text style={styles.balanceLabel}>
-            SALDO TOTAL
-          </Text>
-
-          <View style={styles.balanceIcon}>
-            <Ionicons
-              name="wallet-outline"
-              size={19}
-              color="#ffffff"
-            />
-          </View>
-        </View>
-
-        <Text
-          style={[
-            styles.balanceValue,
-            isPositive
-              ? styles.balancePositive
-              : styles.balanceNegative,
-          ]}
-        >
-          {formatCurrency(balance)}
-        </Text>
-
-        <View style={styles.balanceBottom}>
-          <View style={styles.balanceStatus}>
-            <Ionicons
-              name={
-                isPositive
-                  ? 'trending-up-outline'
-                  : 'trending-down-outline'
-              }
-              size={15}
-              color={isPositive ? '#4ade80' : '#fb7185'}
-            />
-
-            <Text
-              style={[
-                styles.balanceStatusText,
-                {
-                  color: isPositive ? '#86efac' : '#fda4af',
-                },
-              ]}
-            >
-              {isPositive
-                ? 'Saldo positivo'
-                : 'Saldo negativo'}
-            </Text>
-          </View>
-
-          <Ionicons
-            name="chevron-forward-outline"
-            size={17}
-            color="#667085"
-          />
-        </View>
-      </View>
-
-      {/* SUMMARY */}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionEyebrow}>
-          RESUMO
-        </Text>
-      </View>
-
-      <View style={styles.summaryContainer}>
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryIconIncome}>
-            <Ionicons
-              name="arrow-up-outline"
-              size={17}
-              color="#16a34a"
-            />
-          </View>
-
-          <Text style={styles.summaryLabel}>
-            Receitas
-          </Text>
-
-          <Text style={styles.summaryValue}>
-            {formatCurrency(totals.income)}
-          </Text>
-        </View>
-
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryIconExpense}>
-            <Ionicons
-              name="arrow-down-outline"
-              size={17}
-              color="#dc2626"
-            />
-          </View>
-
-          <Text style={styles.summaryLabel}>
-            Despesas
-          </Text>
-
-          <Text style={styles.summaryValue}>
-            {formatCurrency(totals.expenses)}
-          </Text>
-        </View>
-      </View>
-
-      {/* MONEY ANALYSIS */}
-
-      <View style={styles.sectionHeader}>
-        <Text style={styles.sectionEyebrow}>
-          SEU DINHEIRO
-        </Text>
-      </View>
-
-      <View style={styles.moneyCard}>
-        <View style={styles.moneyHeader}>
-          <View>
-            <Text style={styles.moneyTitle}>
-              Comprometimento da renda
-            </Text>
-
-            <Text style={styles.moneySubtitle}>
-              Quanto da sua renda já foi utilizada
-            </Text>
-          </View>
-
-          <Text style={styles.moneyPercentage}>
-            {financialAnalysis.expensePercentage.toFixed(0)}%
-          </Text>
-        </View>
-
-        <View style={styles.progressBackground}>
-          <View
-            style={[
-              styles.progressBar,
-              {
-                width: `${Math.min(
-                  financialAnalysis.expensePercentage,
-                  100,
-                )}%`,
-              },
-            ]}
-          />
-        </View>
-
-        <View style={styles.moneyStats}>
-          <View style={styles.moneyStat}>
-            <Text style={styles.moneyStatLabel}>
-              DISPONÍVEL
-            </Text>
-
-            <Text
-              style={[
-                styles.moneyStatValue,
-                financialAnalysis.savings < 0
-                  ? styles.expense
-                  : styles.income,
-              ]}
-            >
-              {formatCurrency(
-                financialAnalysis.savings,
-              )}
-            </Text>
-
-            <Text style={styles.moneyStatDescription}>
-              {financialAnalysis.savingsPercentage.toFixed(
-                0,
-              )}
-              % da renda
-            </Text>
-          </View>
-
-          <View style={styles.verticalDivider} />
-
-          <View style={styles.moneyStat}>
-            <Text style={styles.moneyStatLabel}>
-              MAIOR CATEGORIA
-            </Text>
-
-            <Text
-              style={styles.categoryValue}
-              numberOfLines={1}
-              ellipsizeMode="tail"
-            >
-              {financialAnalysis.mainCategory ??
-                'Sem categoria'}
-            </Text>
-
-            <Text style={styles.moneyStatDescription}>
-              {formatCurrency(
-                financialAnalysis.mainCategoryAmount,
-              )}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* INSIGHT */}
-
-      <View style={styles.insightCard}>
-        <View style={styles.insightIcon}>
-          <Ionicons
-            name="sparkles-outline"
-            size={20}
-            color="#2563eb"
-          />
-        </View>
-
-        <View style={styles.insightContent}>
-          <Text style={styles.insightLabel}>
-            INSIGHT DO GFINANCE
-          </Text>
-
-          <Text style={styles.insightText}>
-            {insightText}
-          </Text>
-
-          {financialAnalysis.mainCategory && (
-            <Text style={styles.insightDescription}>
-              {formatCurrency(
-                financialAnalysis.mainCategoryAmount,
-              )}{' '}
-              representam sua principal concentração
-              de despesas.
-            </Text>
-          )}
-        </View>
-      </View>
-
-      {/* TRANSACTIONS */}
-
-      <View style={styles.transactionsHeader}>
-        <View>
-          <Text style={styles.sectionEyebrow}>
-            MOVIMENTAÇÕES
-          </Text>
-
-          <Text style={styles.transactionsTitle}>
-            Transações recentes
-          </Text>
-        </View>
-
-        <TouchableOpacity>
-          <Text style={styles.seeAll}>
-            Ver todas
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.transactionsCard}>
-        {openFinanceTransactions.length === 0 ? (
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIcon}>
-              <Ionicons
-                name="receipt-outline"
-                size={23}
-                color="#98a2b3"
-              />
-            </View>
-
-            <Text style={styles.emptyTitle}>
-              Nenhuma transação
-            </Text>
-
-            <Text style={styles.emptyText}>
-              Suas movimentações aparecerão aqui.
-            </Text>
-          </View>
-        ) : (
-          openFinanceTransactions
-            .slice(0, 5)
-            .map((transaction, index) => (
-              <View
-                key={transaction.id}
-                style={[
-                  styles.transactionRow,
-                  index ===
-                    Math.min(
-                      openFinanceTransactions.length,
-                      5,
-                    ) -
-                      1 && styles.lastTransaction,
-                ]}
-              >
-                <View style={styles.transactionLeft}>
-                  <View
-                    style={[
-                      styles.transactionIcon,
-                      transaction.type === 'EXPENSE'
-                        ? styles.expenseIcon
-                        : styles.incomeIcon,
-                    ]}
-                  >
-                    <Ionicons
-                      name={
-                        transaction.type === 'EXPENSE'
-                          ? 'arrow-down-outline'
-                          : 'arrow-up-outline'
-                      }
-                      size={17}
-                      color={
-                        transaction.type === 'EXPENSE'
-                          ? '#dc2626'
-                          : '#16a34a'
-                      }
-                    />
-                  </View>
-
-                  <View style={styles.transactionInfo}>
-                    <Text
-                      style={styles.transactionDescription}
-                      numberOfLines={1}
-                      ellipsizeMode="tail"
-                    >
-                      {transaction.description}
-                    </Text>
-
-                    <Text style={styles.transactionStatus}>
-                      {formatTransactionStatus(
-                        transaction.status,
-                      )}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text
-                  style={[
-                    styles.transactionAmount,
-                    transaction.type === 'EXPENSE'
-                      ? styles.expense
-                      : styles.income,
-                  ]}
-                >
-                  {transaction.type === 'EXPENSE'
-                    ? '- '
-                    : '+ '}
-                  {formatCurrency(transaction.amount)}
-                </Text>
+            {bankConnected ? (
+              <View style={styles.connectedBadge}>
+                <View style={styles.connectedDot} />
+                <AppText variant="meta" tone="secondary">
+                  Conta conectada
+                </AppText>
               </View>
-            ))
-        )}
-      </View>
+            ) : null}
+          </View>
 
-      {/* ADD TRANSACTION */}
+          <AppText
+            variant="value"
+            color={isPositive ? appColors.textPrimary : appColors.expense}
+            style={styles.balanceValue}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+          >
+            {formatCurrency(balance)}
+          </AppText>
 
-      {openFinanceBalance === null && (
-        <TouchableOpacity
-          style={styles.addTransactionButton}
-          onPress={() =>
-            navigation.navigate('CreateTransaction')
-          }
-          activeOpacity={0.85}
-        >
-          <View style={styles.addIcon}>
+          <View style={styles.balanceFooter}>
             <Ionicons
-              name="add-outline"
-              size={21}
-              color="#ffffff"
+              name={isPositive ? 'trending-up' : 'trending-down'}
+              size={15}
+              color={isPositive ? appColors.income : appColors.expense}
             />
+            <AppText
+              variant="captionStrong"
+              color={isPositive ? appColors.income : appColors.expense}
+            >
+              {isPositive ? 'Saldo positivo' : 'Saldo negativo'}
+            </AppText>
           </View>
+        </Surface>
+      </Animated.View>
 
-          <View style={styles.addContent}>
-            <Text style={styles.addTitle}>
-              Nova transação
-            </Text>
-
-            <Text style={styles.addSubtitle}>
-              Registre uma entrada ou saída
-            </Text>
-          </View>
-
-          <Ionicons
-            name="arrow-forward-outline"
-            size={19}
-            color="#ffffff"
+      {/* 3 — Income and expenses */}
+      <Animated.View style={statsEntrance}>
+        <StatGrid style={styles.stats}>
+          <Stat
+            label="Receitas"
+            value={formatCurrency(totals.income)}
+            direction="positive"
+            icon="arrow-down"
           />
-        </TouchableOpacity>
-      )}
-    </ScrollView>
-  )
+          <Stat
+            label="Despesas"
+            value={formatCurrency(totals.expenses)}
+            direction="negative"
+            icon="arrow-up"
+          />
+        </StatGrid>
+      </Animated.View>
+
+      {/*
+        4 — Spending concentration.
+
+        The income-commitment ring was dropped: it restated the expenses tile
+        directly beside it. This reads the same money from a different angle —
+        how concentrated the spending is, which is what actually tells you where
+        to cut — and it absorbs the separate insight line, whose only content was
+        naming the top category.
+
+        The ring that answered it was then dropped too. It carried a single
+        percentage through a chart library that would not draw it on device,
+        and a ranked list says strictly more: the runner-up, the gap between
+        them, and how much of the total the leader actually holds.
+      */}
+      <Animated.View style={[analysisEntrance, styles.block]}>
+        <Section
+          title="Concentração de gastos"
+          eyebrow="Análise"
+          description="Em qual categoria seus gastos estão concentrados"
+        >
+          {hasCategoryAnalysis ? (
+            <>
+              <AppText variant="caption" tone="tertiary" style={styles.shareHint}>
+                {formatCurrency(financialAnalysis.mainCategoryAmount)} de{' '}
+                {formatCurrency(financialAnalysis.categoryTotal)} em despesas
+              </AppText>
+
+              <CategoryShare rows={categoryShares} formatAmount={formatCurrency} />
+            </>
+          ) : (
+            <AppText variant="bodySmall" tone="tertiary">
+              {insightText}
+            </AppText>
+          )}
+        </Section>
+      </Animated.View>
+
+      {/* 5 — Recent transactions */}
+      <Animated.View style={[listEntrance, styles.block]}>
+        <Section
+          title="Transações recentes"
+          eyebrow="Movimentações"
+          actionLabel={
+            openFinanceTransactions.length > 0 ? 'Ver todas' : undefined
+          }
+          onActionPress={
+            openFinanceTransactions.length > 0
+              ? () => navigation.navigate('Transactions')
+              : undefined
+          }
+        >
+          {openFinanceTransactions.length === 0 ? (
+            <EmptyState
+              icon="receipt-outline"
+              title="Nenhuma transação"
+              description="Suas movimentações aparecerão aqui."
+            />
+          ) : (
+            <View>
+              {openFinanceTransactions.slice(0, 5).map((transaction, index) => {
+                const isExpense = transaction.type === 'EXPENSE';
+
+                return (
+                  <ListRow
+                    key={transaction.id}
+                    divider={index > 0}
+                    title={transaction.description}
+                    meta={formatTransactionStatus(transaction.status)}
+                    amount={`${isExpense ? '-' : '+'}${formatCurrency(transaction.amount)}`}
+                    amountTone={isExpense ? 'negative' : 'positive'}
+                    icon={isExpense ? 'arrow-up' : 'arrow-down'}
+                    iconTone={isExpense ? 'negative' : 'positive'}
+                  />
+                );
+              })}
+            </View>
+          )}
+        </Section>
+      </Animated.View>
+
+      {/* 6 — Primary action */}
+      {openFinanceBalance === null ? (
+        <Button
+          title="Nova transação"
+          onPress={() => navigation.navigate('CreateTransaction')}
+          size="lg"
+          fullWidth
+          icon="add"
+          style={styles.addButton}
+        />
+      ) : null}
+    </ScrollScreen>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fb',
-  },
-
-  contentContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 52,
-    paddingBottom: 48,
-  },
-
-  /* HEADER */
-
+  /* Context */
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 24,
+    gap: appSpace.md,
+    marginBottom: appSpace.xl,
   },
 
-  brandArea: {
+  headerText: {
+    flex: 1,
+  },
+
+  /* Balance */
+  balance: {
+    marginBottom: appSpace.lg,
+  },
+
+  balanceTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
-  },
-
-  logo: {
-    width: 43,
-    height: 43,
-  },
-
-  greeting: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#101828',
-    marginBottom: 2,
-  },
-
-  headerSubtitle: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#98a2b3',
-  },
-
-  headerButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#e8edf3',
-  },
-
-  /* TITLE */
-
-  titleArea: {
-    marginBottom: 15,
-  },
-
-  title: {
-    fontSize: 29,
-    fontWeight: '800',
-    color: '#101828',
-    letterSpacing: -1,
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    gap: appSpace.md,
+    marginBottom: appSpace.md,
   },
 
   connectedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: 6,
+    gap: appSpace.xs,
   },
 
   connectedDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#12b76a',
-  },
-
-  connectedText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#667085',
-  },
-
-  /* BALANCE */
-
-  balanceCard: {
-    backgroundColor: '#101828',
-    borderRadius: 25,
-    padding: 21,
-    marginBottom: 24,
-    shadowColor: '#101828',
-    shadowOffset: {
-      width: 0,
-      height: 9,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 5,
-  },
-
-  balanceTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  balanceLabel: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#98a2b3',
-    letterSpacing: 0.8,
-  },
-
-  balanceIcon: {
-    width: 35,
-    height: 35,
-    borderRadius: 11,
-    backgroundColor: '#1d2939',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: appColors.income,
   },
 
   balanceValue: {
-    fontSize: 34,
-    fontWeight: '800',
-    letterSpacing: -1.3,
-    marginTop: 17,
-    marginBottom: 20,
+    marginBottom: appSpace.lg,
   },
 
-  balancePositive: {
-    color: '#ffffff',
-  },
-
-  balanceNegative: {
-    color: '#fb7185',
-  },
-
-  balanceBottom: {
+  balanceFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 14,
+    gap: appSpace.xs,
+    paddingTop: appSpace.md,
     borderTopWidth: 1,
-    borderTopColor: '#1d2939',
+    borderTopColor: appColors.border,
   },
 
-  balanceStatus: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
+  /* Stats */
+  stats: {
+    marginBottom: appSpace.xxl,
   },
 
-  balanceStatusText: {
-    fontSize: 11,
-    fontWeight: '700',
+  /* Blocks */
+  block: {
+    marginBottom: appSpace.xxl,
   },
 
-  /* SECTION */
-
-  sectionHeader: {
-    marginBottom: 10,
+  /* Analysis */
+  shareHint: {
+    marginBottom: appSpace.md,
   },
 
-  sectionEyebrow: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#98a2b3',
-    letterSpacing: 1,
+  /* Action */
+  addButton: {
+    marginTop: appSpace.xs,
   },
-
-  /* SUMMARY */
-
-  summaryContainer: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 25,
-  },
-
-  summaryCard: {
-    flex: 1,
-    minWidth: 0,
-    backgroundColor: '#ffffff',
-    borderRadius: 19,
-    padding: 15,
-    borderWidth: 1,
-    borderColor: '#e8edf3',
-  },
-
-  summaryIconIncome: {
-    width: 31,
-    height: 31,
-    borderRadius: 10,
-    backgroundColor: '#ecfdf3',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-
-  summaryIconExpense: {
-    width: 31,
-    height: 31,
-    borderRadius: 10,
-    backgroundColor: '#fff1f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-
-  summaryLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#667085',
-    marginBottom: 5,
-  },
-
-  summaryValue: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#101828',
-    letterSpacing: -0.4,
-  },
-
-  /* MONEY */
-
-  moneyCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 23,
-    padding: 19,
-    borderWidth: 1,
-    borderColor: '#e8edf3',
-    marginBottom: 12,
-  },
-
-  moneyHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 15,
-    marginBottom: 17,
-  },
-
-  moneyTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#101828',
-    marginBottom: 4,
-  },
-
-  moneySubtitle: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#98a2b3',
-  },
-
-  moneyPercentage: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#2563eb',
-  },
-
-  progressBackground: {
-    height: 9,
-    width: '100%',
-    backgroundColor: '#edf1f5',
-    borderRadius: 99,
-    overflow: 'hidden',
-    marginBottom: 20,
-  },
-
-  progressBar: {
-    height: '100%',
-    backgroundColor: '#2563eb',
-    borderRadius: 99,
-  },
-
-  moneyStats: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  moneyStat: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  moneyStatLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#98a2b3',
-    letterSpacing: 0.5,
-    marginBottom: 7,
-  },
-
-  moneyStatValue: {
-    fontSize: 17,
-    fontWeight: '800',
-    marginBottom: 3,
-  },
-
-  categoryValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#101828',
-    marginBottom: 4,
-  },
-
-  moneyStatDescription: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#98a2b3',
-  },
-
-  verticalDivider: {
-    width: 1,
-    height: 52,
-    backgroundColor: '#edf0f4',
-    marginHorizontal: 15,
-  },
-
-  /* INSIGHT */
-
-  insightCard: {
-    flexDirection: 'row',
-    backgroundColor: '#eef5ff',
-    borderRadius: 21,
-    padding: 16,
-    marginBottom: 27,
-    borderWidth: 1,
-    borderColor: '#dceaff',
-    gap: 12,
-  },
-
-  insightIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  insightContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  insightLabel: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#2563eb',
-    letterSpacing: 0.7,
-    marginBottom: 5,
-  },
-
-  insightText: {
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '700',
-    color: '#172033',
-  },
-
-  insightDescription: {
-    fontSize: 10,
-    lineHeight: 15,
-    fontWeight: '500',
-    color: '#667085',
-    marginTop: 5,
-  },
-
-  /* TRANSACTIONS */
-
-  transactionsHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-
-  transactionsTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#101828',
-    marginTop: 4,
-  },
-
-  seeAll: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#2563eb',
-    marginBottom: 2,
-  },
-
-  transactionsCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 22,
-    paddingHorizontal: 17,
-    borderWidth: 1,
-    borderColor: '#e8edf3',
-    marginBottom: 14,
-  },
-
-  transactionRow: {
-    minHeight: 69,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f2f5',
-  },
-
-  lastTransaction: {
-    borderBottomWidth: 0,
-  },
-
-  transactionLeft: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 11,
-  },
-
-  transactionIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-
-  expenseIcon: {
-    backgroundColor: '#fff1f0',
-  },
-
-  incomeIcon: {
-    backgroundColor: '#ecfdf3',
-  },
-
-  transactionInfo: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  transactionDescription: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#172033',
-    marginBottom: 4,
-  },
-
-  transactionStatus: {
-    fontSize: 9,
-    fontWeight: '600',
-    color: '#98a2b3',
-  },
-
-  transactionAmount: {
-    flexShrink: 0,
-    maxWidth: 105,
-    fontSize: 12,
-    fontWeight: '800',
-    textAlign: 'right',
-  },
-
-  /* EMPTY */
-
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 27,
-  },
-
-  emptyIcon: {
-    width: 45,
-    height: 45,
-    borderRadius: 15,
-    backgroundColor: '#f2f4f7',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-  },
-
-  emptyTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#344054',
-    marginBottom: 4,
-  },
-
-  emptyText: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#98a2b3',
-  },
-
-  /* ADD TRANSACTION */
-
-  addTransactionButton: {
-    minHeight: 66,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2563eb',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    gap: 12,
-    shadowColor: '#2563eb',
-    shadowOffset: {
-      width: 0,
-      height: 6,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-
-  addIcon: {
-    width: 37,
-    height: 37,
-    borderRadius: 12,
-    backgroundColor: '#1d4ed8',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  addContent: {
-    flex: 1,
-  },
-
-  addTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#ffffff',
-    marginBottom: 3,
-  },
-
-  addSubtitle: {
-    fontSize: 10,
-    fontWeight: '500',
-    color: '#bfdbfe',
-  },
-
-  income: {
-    color: '#16a34a',
-  },
-
-  expense: {
-    color: '#dc2626',
-  },
-})
+});

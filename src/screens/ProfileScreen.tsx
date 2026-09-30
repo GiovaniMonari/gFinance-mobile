@@ -1,65 +1,69 @@
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-} from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import {
-  NativeStackNavigationProp,
-} from '@react-navigation/native-stack'
-import { useNavigation } from '@react-navigation/native'
-import { useEffect, useState } from 'react'
+/**
+ * Econva — Profile
+ *
+ * Quiet and structured. Identity, integrations, security — each a small
+ * section with a refined list, separated by space and hairlines rather than by
+ * a wall of cards.
+ *
+ * Connection state and navigation are unchanged.
+ */
 
-import { RootStackParamList } from '../navigation/AppNavigator'
-import { getAccessToken } from '../api/authApi'
-import { getConnections } from '../services/openFinanceService'
-import { AppLoading } from '../components/AppLoading'
+import { useEffect, useState } from 'react';
+import { Animated, StyleSheet, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { getAccessToken } from '../api/authApi';
+import { getConnections } from '../services/openFinanceService';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import { AppLoading } from '../components/AppLoading';
+import { appColors, appRadius, appSpace, appMotion } from '../theme/app';
+import { Logo, useEntrance } from '../components/ui';
+import {
+  AppText,
+  ListRow,
+  ScrollScreen,
+  Section,
+  Surface,
+} from '../components/app';
 
-type ProfileNavigationProp =
-  NativeStackNavigationProp<RootStackParamList>
+type ProfileNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export function ProfileScreen() {
-  const navigation =
-    useNavigation<ProfileNavigationProp>()
-
-  const [connected, setConnected] =
-    useState(false)
-
-  const [loading, setLoading] =
-    useState(true)
+  const navigation = useNavigation<ProfileNavigationProp>();
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function checkConnection() {
       try {
-        const accessToken = await getAccessToken()
-
-        if (!accessToken) {
-          return
-        }
-
-        const response =
-          await getConnections(accessToken)
-
+        const accessToken = await getAccessToken();
+        if (!accessToken) return;
+        const response = await getConnections(accessToken);
         setConnected(
           (response.connections ?? []).some(
-            (connection: {
-              status: string
-            }) => connection.status === 'connected',
+            (connection: { status: string }) => connection.status === 'connected',
           ),
-        )
+        );
       } catch (error) {
-        console.error(
-          'ERRO AO VERIFICAR CONEXÃO:',
-          error,
-        )
+        console.error('ERRO AO VERIFICAR CONEXÃO:', error);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
+    checkConnection();
+  }, []);
 
-    checkConnection()
-  }, [])
+  const identityEntrance = useEntrance({ start: !loading });
+  const rowsEntrance = useEntrance({ start: !loading, delay: appMotion.stagger });
+  const securityEntrance = useEntrance({
+    start: !loading,
+    delay: appMotion.stagger * 2,
+  });
+  const privacyEntrance = useEntrance({
+    start: !loading,
+    delay: appMotion.stagger * 3,
+  });
 
   if (loading) {
     return (
@@ -67,427 +71,171 @@ export function ProfileScreen() {
         message="Carregando seu perfil"
         description="Verificando suas informações"
       />
-    )
+    );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>
-            SUA CONTA
-          </Text>
-
-          <Text style={styles.title}>
-            Perfil
-          </Text>
-        </View>
-
-        <View style={styles.headerIcon}>
-          <Ionicons
-            name="person-outline"
-            size={22}
-            color="#2563eb"
-          />
-        </View>
-      </View>
-
-      <View style={styles.profileCard}>
-        <View style={styles.avatar}>
-          <Ionicons
-            name="person"
-            size={25}
-            color="#2563eb"
-          />
-        </View>
-
-        <View style={styles.profileInfo}>
-          <Text style={styles.profileTitle}>
-            Minha conta
-          </Text>
-
-          <View style={styles.statusRow}>
-            <View style={styles.statusDot} />
-
-            <Text style={styles.profileStatus}>
-              Conta autenticada
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.accountBadge}>
-          <Text style={styles.accountBadgeText}>
-            PESSOAL
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          CONTAS E INTEGRAÇÕES
-        </Text>
-
-        <TouchableOpacity
-          style={styles.option}
-          onPress={() =>
-            navigation.navigate('ConnectBank')
-          }
-          activeOpacity={0.8}
-        >
-          <View
-            style={[
-              styles.iconContainer,
-              connected &&
-                styles.connectedIconContainer,
-            ]}
-          >
-            <Ionicons
-              name={
-                connected
-                  ? 'checkmark-circle-outline'
-                  : 'card-outline'
-              }
-              size={22}
-              color={
-                connected
-                  ? '#16803c'
-                  : '#2563eb'
-              }
-            />
+    <ScrollScreen tabBar>
+      {/* Identity */}
+      <Animated.View style={[styles.identity, identityEntrance]}>
+        <View style={styles.identityRow}>
+          <View style={styles.avatar}>
+            <Logo variant="mark" size={44} />
           </View>
 
-          <View style={styles.optionContent}>
-            <Text
-              style={styles.optionTitle}
-              numberOfLines={1}
-            >
-              {connected
-                ? 'Conta bancária conectada'
-                : 'Conectar conta bancária'}
-            </Text>
+          <View style={styles.identityText}>
+            <AppText variant="screenTitle" tone="primary" numberOfLines={1}>
+              Minha conta
+            </AppText>
+            <View style={styles.statusRow}>
+              <View style={styles.statusDot} />
+              <AppText variant="caption" tone="secondary">
+                Conta autenticada
+              </AppText>
+            </View>
+          </View>
+        </View>
+      </Animated.View>
 
-            <Text style={styles.optionDescription}>
-              {connected
+      {/* Integrations */}
+      <Animated.View style={rowsEntrance}>
+        <Section title="Contas e integrações" eyebrow="Sincronização">
+          <ListRow
+            title={
+              connected ? 'Conta bancária conectada' : 'Conectar conta bancária'
+            }
+            meta={
+              connected
                 ? 'Sincronizada via Open Finance'
-                : 'Sincronize suas contas e transações'}
-            </Text>
-          </View>
-
-          <View style={styles.chevronContainer}>
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color="#98a2b3"
-            />
-          </View>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          SEGURANÇA
-        </Text>
-
-        <View style={styles.securityCard}>
-          <View style={styles.securityIcon}>
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={21}
-              color="#2563eb"
-            />
-          </View>
-
-          <View style={styles.securityContent}>
-            <Text style={styles.securityTitle}>
-              Dados protegidos
-            </Text>
-
-            <Text style={styles.securityDescription}>
-              Sua sessão é protegida por autenticação
-              segura.
-            </Text>
-          </View>
-
-          <View style={styles.securityStatus}>
-            <Ionicons
-              name="checkmark-circle"
-              size={18}
-              color="#16a34a"
-            />
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.infoCard}>
-        <View style={styles.infoIcon}>
-          <Ionicons
-            name="lock-closed-outline"
-            size={19}
-            color="#2563eb"
+                : 'Sincronize suas contas e transações'
+            }
+            icon={connected ? 'checkmark-circle' : 'card-outline'}
+            iconTone={connected ? 'positive' : 'accent'}
+            showChevron
+            onPress={() => navigation.navigate('ConnectBank')}
           />
-        </View>
+        </Section>
+      </Animated.View>
 
-        <View style={styles.infoContent}>
-          <Text style={styles.infoTitle}>
-            Privacidade em primeiro lugar
-          </Text>
+      {/* Security */}
+      <Animated.View style={[securityEntrance, styles.block]}>
+        <Section title="Segurança" eyebrow="Sua sessão">
+          <Surface variant="subtle" radius="group" padding="md">
+            <View style={styles.securityInner}>
+              <View style={styles.securityIcon}>
+                <Ionicons
+                  name="shield-checkmark"
+                  size={18}
+                  color={appColors.accentBright}
+                />
+              </View>
 
-          <Text style={styles.infoDescription}>
-            Seus dados financeiros são utilizados
-            apenas para organizar sua vida financeira.
-          </Text>
+              <View style={styles.securityText}>
+                <AppText variant="captionStrong" tone="primary">
+                  Dados protegidos
+                </AppText>
+                <AppText variant="caption" tone="secondary">
+                  Sua sessão é protegida por autenticação segura.
+                </AppText>
+              </View>
+            </View>
+          </Surface>
+        </Section>
+      </Animated.View>
+
+      {/* Privacy — part of the security story, not an orphan note */}
+      <Animated.View style={[privacyEntrance, styles.block]}>
+        <View style={styles.privacy}>
+          <Ionicons name="lock-closed" size={15} color={appColors.textTertiary} />
+          <AppText variant="caption" tone="tertiary" style={styles.privacyText}>
+            Seus dados financeiros são utilizados apenas para organizar sua vida
+            financeira.
+          </AppText>
         </View>
-      </View>
-    </View>
-  )
+      </Animated.View>
+    </ScrollScreen>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    paddingHorizontal: 20,
-    paddingTop: 58,
-    backgroundColor: '#f5f7fb',
+  /* Identity */
+  identity: {
+    marginTop: appSpace.lg,
+    marginBottom: appSpace.xxxl,
   },
 
-  header: {
+  identityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-
-  eyebrow: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.1,
-    color: '#98a2b3',
-    marginBottom: 5,
-  },
-
-  title: {
-    fontSize: 30,
-    fontWeight: '800',
-    color: '#101828',
-    letterSpacing: -0.6,
-  },
-
-  headerIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#eaf2ff',
-  },
-
-  profileCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 18,
-    borderRadius: 22,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#edf0f5',
-    marginBottom: 30,
+    gap: appSpace.lg,
   },
 
   avatar: {
-    width: 54,
-    height: 54,
-    borderRadius: 18,
+    width: 64,
+    height: 64,
+    borderRadius: appRadius.control,
+    backgroundColor: appColors.surface,
+    borderWidth: 1,
+    borderColor: appColors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eaf2ff',
-    marginRight: 15,
   },
 
-  profileInfo: {
+  identityText: {
     flex: 1,
     minWidth: 0,
-  },
-
-  profileTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#101828',
-    marginBottom: 6,
+    gap: appSpace.xs,
   },
 
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: appSpace.sm,
   },
 
   statusDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#16a34a',
-    marginRight: 6,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: appColors.income,
   },
 
-  profileStatus: {
-    fontSize: 12,
-    fontWeight: '500',
-    color: '#667085',
+  /* Sections */
+  block: {
+    marginTop: appSpace.xxl,
   },
 
-  accountBadge: {
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 9,
-    backgroundColor: '#f5f7fb',
-  },
-
-  accountBadgeText: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 0.7,
-    color: '#98a2b3',
-  },
-
-  section: {
-    marginBottom: 22,
-  },
-
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: '#98a2b3',
-    marginBottom: 10,
-  },
-
-  option: {
+  securityInner: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#edf0f5',
-  },
-
-  iconContainer: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#eaf2ff',
-    marginRight: 13,
-  },
-
-  connectedIconContainer: {
-    backgroundColor: '#eaf7ef',
-  },
-
-  optionContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  optionTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#101828',
-    flexShrink: 1,
-  },
-
-  optionDescription: {
-    marginTop: 5,
-    fontSize: 12,
-    color: '#98a2b3',
-    lineHeight: 17,
-  },
-
-  chevronContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f5f7fb',
-    marginLeft: 8,
-  },
-
-  securityCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#edf0f5',
+    alignItems: 'flex-start',
+    gap: appSpace.md,
   },
 
   securityIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: appRadius.md,
+    backgroundColor: appColors.accentWash,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#eaf2ff',
-    marginRight: 12,
   },
 
-  securityContent: {
+  securityText: {
     flex: 1,
-    minWidth: 0,
+    gap: 2,
   },
 
-  securityTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#101828',
-    marginBottom: 4,
-  },
-
-  securityDescription: {
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#98a2b3',
-  },
-
-  securityStatus: {
-    marginLeft: 8,
-  },
-
-  infoCard: {
+  /* Privacy */
+  privacy: {
     flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderRadius: 20,
-    backgroundColor: '#eaf2ff',
-    borderWidth: 1,
-    borderColor: '#dce9ff',
+    alignItems: 'flex-start',
+    gap: appSpace.md,
+    paddingTop: appSpace.lg,
+    borderTopWidth: 1,
+    borderTopColor: appColors.border,
   },
 
-  infoIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-    marginRight: 12,
-  },
-
-  infoContent: {
+  privacyText: {
     flex: 1,
   },
-
-  infoTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#101828',
-    marginBottom: 3,
-  },
-
-  infoDescription: {
-    fontSize: 11,
-    lineHeight: 16,
-    color: '#667085',
-  },
-})
+});

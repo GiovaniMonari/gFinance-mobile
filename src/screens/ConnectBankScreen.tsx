@@ -1,275 +1,253 @@
-import React, { useEffect, useState } from 'react'
-import {
-  ActivityIndicator,
-  Alert,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import { PluggyConnect } from 'react-native-pluggy-connect'
+/**
+ * Econva — Connect Bank
+ *
+ * A screen that has to communicate trust. Same dark language as the rest of
+ * the product, but the emphasis moves to the security story: the institution,
+ * the connection state, and a plain statement about what the user does and does
+ * not share. No stock imagery of banks, no badges of invented certifications.
+ *
+ * The Pluggy Connect flow, the token exchange and all messages are unchanged.
+ */
 
+import React, { useEffect, useState } from 'react';
+import { Animated, StyleSheet, View } from 'react-native';
+import Reanimated, {
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  LinearTransition,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { PluggyConnect } from 'react-native-pluggy-connect';
 import {
   createConnectToken,
   connectBank,
   getConnections,
   getAccounts,
   getTransactions,
-} from '../services/openFinanceService'
+} from '../services/openFinanceService';
+import { getAccessToken } from '../api/authApi';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import { AppLoading } from '../components/AppLoading';
+import { appColors, appMotion, appRadius, appSpace } from '../theme/app';
+import { Button, useEntrance } from '../components/ui';
+import {
+  AppHeader,
+  AppText,
+  ListRow,
+  ScrollScreen,
+  Section,
+  Surface,
+  showAlert,
+} from '../components/app';
+import { translateAccountSubtype } from '../utils/transaction';
 
-import { getAccessToken } from '../api/authApi'
-import { AppLoading } from '../components/AppLoading'
+/*
+ * Layout animation definitions live at module scope, not inline in JSX.
+ * `FadeIn.duration(...)` builds a new object every time it is called, and an
+ * `entering` prop that changes identity re-triggers the entrance — so a screen
+ * that merely re-renders would replay its fade from zero opacity and look like
+ * it had blanked. Stable references, stable behaviour.
+ */
+const ENTER = FadeIn.duration(appMotion.layout);
+const EXIT = FadeOut.duration(appMotion.state);
+const ROW_LAYOUT = LinearTransition.duration(appMotion.layout);
+
+/** Pre-built staggered entrances, so a row's animation never changes identity. */
+const ROW_ENTER = Array.from({ length: 9 }, (_, i) =>
+  FadeInDown.duration(appMotion.layout).delay(i * appMotion.stagger),
+);
 
 type BankAccount = {
-  id: string
-  type: string
-  subtype: string
-  name: string | null
-  balance: number | null
-  currency_code: string | null
-  marketing_name: string | null
+  id: string;
+  type: string;
+  subtype: string;
+  name: string | null;
+  balance: number | null;
+  currency_code: string | null;
+  marketing_name: string | null;
   bank: {
-    name: string | null
-    transfer_number: string | null
-  } | null
+    name: string | null;
+    transfer_number: string | null;
+  } | null;
   credit: {
-    brand: string | null
-    available_credit_limit: number | null
-    credit_limit: number | null
-    minimum_payment: number | null
-    balance_due_date: string | null
-    status: string | null
-  } | null
-}
+    brand: string | null;
+    available_credit_limit: number | null;
+    credit_limit: number | null;
+    minimum_payment: number | null;
+    balance_due_date: string | null;
+    status: string | null;
+  } | null;
+};
 
 type Transaction = {
-  id: string
-  description: string
-  amount: number
-  date: string
-  category: string | null
-  type: 'DEBIT' | 'CREDIT'
-  status: string
-}
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  category: string | null;
+  type: 'DEBIT' | 'CREDIT';
+  status: string;
+};
 
 type Connection = {
-  id: string
-  provider: string
-  status: string
-  external_id: string
-  user_id: string
-}
+  id: string;
+  provider: string;
+  status: string;
+  external_id: string;
+  user_id: string;
+};
+
+/**
+ * Accounts are laid out as a row with a leading icon; the figures below are
+ * aligned to the row's text column rather than to the gutter.
+ */
+const ACCOUNT_TEXT_INDENT = 52;
+
+type ConnectBankNavigationProp =
+  NativeStackNavigationProp<RootStackParamList, 'ConnectBank'>;
 
 export function ConnectBankScreen() {
-  const [connectToken, setConnectToken] =
-    useState<string | null>(null)
-
-  const [loading, setLoading] = useState(false)
-
-  const [connections, setConnections] =
-    useState<Connection[]>([])
-
-  const [accounts, setAccounts] =
-    useState<BankAccount[]>([])
-
-  const [transactions, setTransactions] =
-    useState<Transaction[]>([])
-
-  const [initialLoading, setInitialLoading] =
-    useState(true)
+  const navigation = useNavigation<ConnectBankNavigationProp>();
+  const [connectToken, setConnectToken] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [loading, setLoading] = useState(false);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [accounts, setAccounts] = useState<BankAccount[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
-    loadConnections()
-  }, [])
+    loadConnections();
+  }, []);
 
   async function loadConnections() {
     try {
-      setInitialLoading(true)
+      setInitialLoading(true);
+      const accessToken = await getAccessToken();
+      if (!accessToken) return;
 
-      const accessToken = await getAccessToken()
+      const response = await getConnections(accessToken);
+      const loadedConnections = response.connections ?? [];
+      const latestConnection = loadedConnections.length > 0 ? [loadedConnections[0]] : [];
+      setConnections(latestConnection);
 
-      if (!accessToken) {
-        return
-      }
+      if (loadedConnections.length === 0) return;
 
-      const response =
-        await getConnections(accessToken)
+      const connectionId = loadedConnections[0].id;
+      const accountsResponse = await getAccounts(accessToken, connectionId);
+      const loadedAccounts = accountsResponse.accounts ?? [];
+      setAccounts(loadedAccounts);
 
-      const loadedConnections =
-        response.connections ?? []
+      const account = loadedAccounts[0];
+      if (!account) return;
 
-      const latestConnection =
-        loadedConnections.length > 0
-          ? [loadedConnections[0]]
-          : []
-
-      setConnections(latestConnection)
-
-      if (loadedConnections.length === 0) {
-        return
-      }
-
-      const connectionId =
-        loadedConnections[0].id
-
-      const accountsResponse =
-        await getAccounts(
-          accessToken,
-          connectionId,
-        )
-
-      const loadedAccounts =
-        accountsResponse.accounts ?? []
-
-      setAccounts(loadedAccounts)
-
-      const account = loadedAccounts[0]
-
-      if (!account) {
-        return
-      }
-
-      const transactionsResponse =
-        await getTransactions(
-          accessToken,
-          connectionId,
-          account.id,
-        )
-
-      setTransactions(
-        transactionsResponse.transactions ?? [],
-      )
+      const transactionsResponse = await getTransactions(accessToken, connectionId, account.id);
+      setTransactions(transactionsResponse.transactions ?? []);
     } catch (error) {
-      console.error(
-        'ERRO AO CARREGAR CONEXÕES:',
-        error,
-      )
+      console.error('ERRO AO CARREGAR CONEXÕES:', error);
     } finally {
-      setInitialLoading(false)
+      setInitialLoading(false);
     }
   }
 
   async function handleConnectBank() {
     try {
-      setLoading(true)
-
-      const accessToken =
-        await getAccessToken()
-
+      setLoading(true);
+      const accessToken = await getAccessToken();
       if (!accessToken) {
-        Alert.alert(
-          'Sessão expirada',
-          'Faça login novamente para conectar sua conta bancária.',
-        )
-
-        return
+        showAlert({
+          title: 'Sessão expirada',
+          message: 'Faça login novamente para conectar sua conta bancária.',
+          tone: 'danger',
+        });
+        return;
       }
 
-      const response =
-        await createConnectToken(accessToken)
-
-      setConnectToken(
-        response.connect_token,
-      )
+      const response = await createConnectToken(accessToken);
+      setConnectToken(response.connect_token);
     } catch (error) {
-      console.error(error)
-
-      Alert.alert(
-        'Erro',
-        error instanceof Error
-          ? error.message
-          : 'Não foi possível iniciar a conexão bancária.',
-      )
+      console.error(error);
+      showAlert({
+        title: 'Erro',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Não foi possível iniciar a conexão bancária.',
+        tone: 'danger',
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
-  async function handleConnectionSuccess(
-    data: {
-      item: {
-        id: string
-      }
-    },
-  ) {
+  async function handleConnectionSuccess(data: { item: { id: string } }) {
     try {
-      const accessToken =
-        await getAccessToken()
+      const accessToken = await getAccessToken();
+      if (!accessToken) throw new Error('Sessão expirada');
 
-      if (!accessToken) {
-        throw new Error('Sessão expirada')
-      }
-
-      await connectBank(
-        accessToken,
-        data.item.id,
-      )
-
-      await loadConnections()
-
-      Alert.alert(
-        'Banco conectado',
-        'Sua conta foi conectada com sucesso.',
-      )
-
-      setConnectToken(null)
+      await connectBank(accessToken, data.item.id);
+      await loadConnections();
+      showAlert({
+        title: 'Banco conectado',
+        message: 'Sua conta foi conectada com sucesso.',
+        tone: 'success',
+      });
+      setConnectToken(null);
     } catch (error) {
-      console.error(
-        'ERRO AO SALVAR CONEXÃO:',
-        error,
-      )
-
-      Alert.alert(
-        'Erro',
-        error instanceof Error
-          ? error.message
-          : 'Não foi possível salvar a conexão.',
-      )
+      console.error('ERRO AO SALVAR CONEXÃO:', error);
+      // The Pluggy view has already handed us the item and reported success
+      // on its side. If the link cannot be saved it still has to come down —
+      // otherwise the user is stranded inside a completed bank flow with a
+      // dialog over it and no way back to this screen.
+      setConnectToken(null);
+      showAlert({
+        title: 'Erro',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Não foi possível salvar a conexão.',
+        tone: 'danger',
+      });
     }
   }
 
-  function formatCurrency(
-    value: number | null,
-  ) {
-    if (value === null) {
-      return 'Saldo indisponível'
-    }
-
-    return value.toLocaleString(
-      'pt-BR',
-      {
-        style: 'currency',
-        currency: 'BRL',
-      },
-    )
+  function formatCurrency(value: number | null) {
+    if (value === null) return 'Saldo indisponível';
+    return value.toLocaleString('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    });
   }
 
-  function getAccountType(
-    account: BankAccount,
-  ) {
-    if (account.credit) {
-      return 'Cartão de crédito'
-    }
-
-    const subtype =
-      account.subtype?.toLowerCase()
-
-    const types: Record<string, string> = {
-      checking_account: 'Conta corrente',
-      savings_account: 'Conta poupança',
-      investment_account: 'Investimentos',
-      credit_card: 'Cartão de crédito',
-    }
-
-    return (
-      types[subtype] ||
-      (account.type?.toLowerCase() === 'bank'
-        ? 'Conta bancária'
-        : 'Conta')
-    )
+  function getAccountType(account: BankAccount) {
+    if (account.credit) return 'Cartão de crédito';
+    if (account.subtype) return translateAccountSubtype(account.subtype);
+    return account.type?.toLowerCase() === 'bank' ? 'Conta bancária' : 'Conta';
   }
+
+  /*
+   * `initialLoading` owns the screen until the connections arrive, so the
+   * entrances wait for the content the same way the dashboard's do.
+   */
+  const contentReady = !initialLoading;
+
+  const headerEntrance = useEntrance({ start: contentReady });
+  const statusEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger,
+  });
+  const accountsEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger * 2,
+  });
+  const trustEntrance = useEntrance({
+    start: contentReady,
+    delay: appMotion.stagger * 3,
+  });
 
   if (initialLoading) {
     return (
@@ -277,938 +255,357 @@ export function ConnectBankScreen() {
         message="Carregando sua conta"
         description="Buscando suas conexões bancárias"
       />
-    )
+    );
   }
 
   if (connectToken) {
     return (
-      <View style={styles.pluggyContainer}>
+      <View style={styles.pluggy}>
         <PluggyConnect
           connectToken={connectToken}
           includeSandbox={true}
           language="pt"
           onSuccess={handleConnectionSuccess}
-          onClose={() => {
-            setConnectToken(null)
-          }}
+          onClose={() => setConnectToken(null)}
           onError={(error) => {
-            console.error(
-              'PLUGGY ERROR:',
-              error,
-            )
-
-            Alert.alert(
-              'Erro',
-              'Não foi possível conectar o banco.',
-            )
-
-            setConnectToken(null)
+            console.error('PLUGGY ERROR:', error);
+            showAlert({
+              title: 'Erro',
+              message: 'Não foi possível conectar o banco.',
+              tone: 'danger',
+            });
+            setConnectToken(null);
           }}
         />
       </View>
-    )
+    );
   }
 
-  const bankName =
-    accounts[0]?.bank?.name ||
-    'Banco conectado'
+  const bankName = accounts[0]?.bank?.name || 'Banco conectado';
 
   return (
-    <View style={styles.container}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={
-          styles.content
-        }
-      >
-        {/* HEADER */}
-        <View style={styles.header}>
-          <View
-            style={styles.headerTextContainer}
-          >
-            <Text style={styles.eyebrow}>
-              OPEN FINANCE
-            </Text>
+    <ScrollScreen topInset={false}>
+      <Animated.View style={headerEntrance}>
+        <AppHeader
+          title="Conta bancária"
+          eyebrow="Open Finance"
+          onBackPress={() => navigation.goBack()}
+        />
 
-            <Text style={styles.title}>
-              Conta bancária
-            </Text>
+        <AppText variant="screenTitle" tone="primary" style={styles.title}>
+          {connections.length > 0 ? bankName : 'Conecte sua conta'}
+        </AppText>
+        <AppText variant="bodySmall" tone="secondary" style={styles.subtitle}>
+          {connections.length > 0
+            ? 'Suas contas são sincronizadas automaticamente pelo Open Finance.'
+            : 'Sincronize suas contas e transações automaticamente com o Econva.'}
+        </AppText>
+      </Animated.View>
 
-            <Text style={styles.subtitle}>
-              Gerencie suas conexões e acompanhe
-              seus dados financeiros.
-            </Text>
-          </View>
-
-          <View style={styles.headerIcon}>
-            <Ionicons
-              name="business-outline"
-              size={23}
-              color="#2563eb"
-            />
-          </View>
-        </View>
-
-        {connections.length > 0 ? (
-          <>
-            {/* CONNECTION STATUS */}
-            <View style={styles.statusCard}>
-              <View style={styles.statusIcon}>
-                <Ionicons
-                  name="checkmark-circle"
-                  size={22}
-                  color="#16803c"
-                />
-              </View>
-
-              <View
-                style={styles.statusContent}
-              >
-                <Text
-                  style={styles.statusEyebrow}
-                >
-                  CONEXÃO
-                </Text>
-
-                <Text
-                  style={styles.statusTitle}
-                  numberOfLines={1}
-                >
-                  {bankName}
-                </Text>
-
-                <View
-                  style={styles.activeRow}
-                >
-                  <View
-                    style={styles.activeDot}
+      {connections.length > 0 ? (
+        <Reanimated.View
+          entering={ENTER}
+          exiting={EXIT}
+        >
+          {/* Connection status */}
+          <Animated.View style={statusEntrance}>
+            <Surface variant="elevated" radius="panel" padding="lg">
+              <View style={styles.statusRow}>
+                <View style={styles.statusIcon}>
+                  <Ionicons
+                    name="checkmark-circle"
+                    size={22}
+                    color={appColors.income}
                   />
+                </View>
 
-                  <Text
-                    style={styles.activeText}
-                  >
+                <View style={styles.statusText}>
+                  <AppText variant="micro" tone="tertiary">
+                    CONEXÃO
+                  </AppText>
+                  <AppText variant="section" tone="positive">
                     Conexão ativa
-                  </Text>
+                  </AppText>
+                  <AppText variant="caption" tone="tertiary" numberOfLines={1}>
+                    {accounts[0]?.marketing_name ?? 'Via Open Finance'}
+                  </AppText>
                 </View>
               </View>
+            </Surface>
+          </Animated.View>
 
-              <View
-                style={styles.connectedBadge}
+          {/* Accounts */}
+          {accounts.length > 0 ? (
+            <Animated.View style={[accountsEntrance, styles.block]}>
+              <Section
+                title="Suas contas"
+                eyebrow="Visão geral"
+                description={`${accounts.length} ${accounts.length === 1 ? 'conta conectada' : 'contas conectadas'}`}
               >
-                <Text
-                  style={styles.connectedText}
-                >
-                  Ativa
-                </Text>
-              </View>
-            </View>
-
-            {/* ACCOUNTS */}
-            {accounts.length > 0 && (
-              <View style={styles.section}>
-                <View
-                  style={styles.sectionHeader}
-                >
-                  <View>
-                    <Text
-                      style={styles.sectionEyebrow}
-                    >
-                      VISÃO GERAL
-                    </Text>
-
-                    <Text
-                      style={styles.sectionTitle}
-                    >
-                      Suas contas
-                    </Text>
-                  </View>
-
-                  <View
-                    style={styles.countBadge}
-                  >
-                    <Text
-                      style={styles.countText}
-                    >
-                      {accounts.length}
-                    </Text>
-                  </View>
-                </View>
-
-                {accounts.map((account) => {
-                  const isCreditCard =
-                    !!account.credit
+                {accounts.map((account, index) => {
+                  const isCreditCard = !!account.credit;
 
                   return (
-                    <View
+                    <Reanimated.View
                       key={account.id}
-                      style={styles.accountCard}
+                      entering={ROW_ENTER[Math.min(index, 8)]}
+                      layout={ROW_LAYOUT}
+                      style={[styles.account, index > 0 && styles.accountDivided]}
                     >
-                      {/* ACCOUNT HEADER */}
-                      <View
-                        style={
-                          styles.accountHeader
-                        }
-                      >
-                        <View
-                          style={
-                            styles.accountIcon
-                          }
-                        >
-                          <Ionicons
-                            name={
-                              isCreditCard
-                                ? 'card-outline'
-                                : 'wallet-outline'
-                            }
-                            size={21}
-                            color="#2563eb"
-                          />
-                        </View>
+                      <ListRow
+                        title={account.name || 'Conta bancária'}
+                        meta={getAccountType(account)}
+                        icon={isCreditCard ? 'card-outline' : 'wallet-outline'}
+                        iconTone="accent"
+                        emphasis
+                      />
 
-                        <View
-                          style={
-                            styles.accountHeaderContent
-                          }
-                        >
-                          <Text
-                            style={
-                              styles.accountName
-                            }
-                            numberOfLines={1}
-                            ellipsizeMode="tail"
-                          >
-                            {account.name ||
-                              'Conta bancária'}
-                          </Text>
-
-                          <Text
-                            style={
-                              styles.accountType
-                            }
-                          >
-                            {getAccountType(
-                              account,
-                            )}
-                          </Text>
-                        </View>
-
-                        <View
-                          style={
-                            styles.accountArrow
-                          }
-                        >
-                          <Ionicons
-                            name="chevron-forward"
-                            size={16}
-                            color="#98a2b3"
-                          />
-                        </View>
-                      </View>
-
-                      {/* BALANCE */}
-                      <View
-                        style={
-                          styles.balanceContainer
-                        }
-                      >
-                        <Text
-                          style={
-                            styles.balanceLabel
-                          }
-                        >
-                          {isCreditCard
-                            ? 'Fatura atual'
-                            : 'Saldo disponível'}
-                        </Text>
-
-                        <Text
-                          style={styles.balance}
+                      <View style={styles.accountBalance}>
+                        <AppText variant="micro" tone="tertiary">
+                          {(isCreditCard ? 'FATURA ATUAL' : 'SALDO DISPONÍVEL').toUpperCase()}
+                        </AppText>
+                        <AppText
+                          variant="valueLarge"
+                          tone="primary"
                           numberOfLines={1}
                           adjustsFontSizeToFit
                           minimumFontScale={0.7}
                         >
-                          {formatCurrency(
-                            account.balance,
-                          )}
-                        </Text>
+                          {formatCurrency(account.balance)}
+                        </AppText>
                       </View>
 
-                      {/* CREDIT DETAILS */}
-                      {isCreditCard &&
-                        account.credit && (
-                          <View
-                            style={
-                              styles.creditDetails
-                            }
-                          >
-                            {account.credit
-                              .credit_limit !==
-                              null && (
-                              <View
-                                style={
-                                  styles.creditRow
-                                }
-                              >
-                                <View
-                                  style={
-                                    styles.creditLabelContainer
-                                  }
-                                >
-                                  <Ionicons
-                                    name="speedometer-outline"
-                                    size={15}
-                                    color="#98a2b3"
-                                  />
-
-                                  <Text
-                                    style={
-                                      styles.creditLabel
-                                    }
-                                  >
-                                    Limite
-                                  </Text>
-                                </View>
-
-                                <Text
-                                  style={
-                                    styles.creditValue
-                                  }
-                                >
-                                  {formatCurrency(
-                                    account.credit
-                                      .credit_limit,
-                                  )}
-                                </Text>
-                              </View>
-                            )}
-
-                            {account.credit
-                              .available_credit_limit !==
-                              null && (
-                              <View
-                                style={
-                                  styles.creditRow
-                                }
-                              >
-                                <View
-                                  style={
-                                    styles.creditLabelContainer
-                                  }
-                                >
-                                  <Ionicons
-                                    name="wallet-outline"
-                                    size={15}
-                                    color="#98a2b3"
-                                  />
-
-                                  <Text
-                                    style={
-                                      styles.creditLabel
-                                    }
-                                  >
-                                    Disponível
-                                  </Text>
-                                </View>
-
-                                <Text
-                                  style={
-                                    styles.creditValue
-                                  }
-                                >
-                                  {formatCurrency(
-                                    account.credit
-                                      .available_credit_limit,
-                                  )}
-                                </Text>
-                              </View>
-                            )}
-                          </View>
-                        )}
-                    </View>
-                  )
+                      {isCreditCard && account.credit ? (
+                        <View style={styles.creditDetails}>
+                          {account.credit.credit_limit !== null ? (
+                            <View style={styles.creditRow}>
+                              <AppText variant="caption" tone="tertiary">
+                                Limite
+                              </AppText>
+                              <AppText variant="captionStrong" tone="secondary">
+                                {formatCurrency(account.credit.credit_limit)}
+                              </AppText>
+                            </View>
+                          ) : null}
+                          {account.credit.available_credit_limit !== null ? (
+                            <View style={styles.creditRow}>
+                              <AppText variant="caption" tone="tertiary">
+                                Disponível
+                              </AppText>
+                              <AppText variant="captionStrong" tone="secondary">
+                                {formatCurrency(account.credit.available_credit_limit)}
+                              </AppText>
+                            </View>
+                          ) : null}
+                        </View>
+                      ) : null}
+                    </Reanimated.View>
+                  );
                 })}
-              </View>
-            )}
+              </Section>
+            </Animated.View>
+          ) : null}
 
-            {/* SECURITY */}
-            <View style={styles.infoCard}>
-              <View style={styles.infoIcon}>
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={20}
-                  color="#2563eb"
-                />
-              </View>
-
-              <View
-                style={styles.infoContent}
-              >
-                <Text
-                  style={styles.infoEyebrow}
-                >
-                  SEGURANÇA
-                </Text>
-
-                <Text
-                  style={styles.infoTitle}
-                >
-                  Seus dados estão protegidos
-                </Text>
-
-                <Text style={styles.infoText}>
-                  Sua conexão é realizada de forma
-                  segura através do Open Finance.
-                </Text>
-              </View>
-            </View>
-          </>
-        ) : (
-          <>
-            {/* EMPTY STATE */}
-            <View style={styles.emptyCard}>
-              <View style={styles.emptyIconOuter}>
-                <View style={styles.emptyIcon}>
-                  <Ionicons
-                    name="link-outline"
-                    size={28}
-                    color="#2563eb"
-                  />
-                </View>
+          {/* Trust */}
+          <Animated.View style={trustEntrance}>
+            <TrustNote
+              title="Seus dados estão protegidos"
+              description="Sua conexão é realizada de forma segura através do Open Finance."
+            />
+          </Animated.View>
+        </Reanimated.View>
+      ) : (
+        <Reanimated.View
+          entering={ENTER}
+          exiting={EXIT}
+        >
+          {/* No connection yet */}
+          <Animated.View style={statusEntrance}>
+            <Surface variant="subtle" radius="panel" padding="xl">
+              <View style={styles.emptyIcon}>
+                <Ionicons name="link" size={24} color={appColors.accentBright} />
               </View>
 
-              <Text
-                style={styles.emptyEyebrow}
-              >
-                PRIMEIRO PASSO
-              </Text>
+              <AppText variant="section" tone="primary" style={styles.emptyTitle}>
+                Como funciona
+              </AppText>
+              <AppText variant="bodySmall" tone="secondary" style={styles.emptyText}>
+                A conexão é feita direto com o seu banco, pelo Open Finance. O
+                Econva recebe apenas os dados que você autorizar — nunca sua
+                senha.
+              </AppText>
 
-              <Text
-                style={styles.emptyTitle}
-              >
-                Conecte sua conta bancária
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Sincronize suas contas e transações
-                automaticamente com o gFinance.
-              </Text>
-
-              <TouchableOpacity
-                style={[
-                  styles.button,
-                  loading &&
-                    styles.buttonLoading,
-                ]}
+              <Button
+                title="Conectar minha conta"
                 onPress={handleConnectBank}
-                disabled={loading}
-                activeOpacity={0.85}
-              >
-                {loading ? (
-                  <>
-                    <ActivityIndicator
-                      color="#ffffff"
-                      size="small"
-                    />
+                size="lg"
+                fullWidth
+                trailingIcon="arrow-forward"
+                style={styles.emptyAction}
+              />
+            </Surface>
+          </Animated.View>
 
-                    <Text
-                      style={styles.buttonText}
-                    >
-                      Preparando conexão...
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <View
-                      style={styles.buttonIcon}
-                    >
-                      <Ionicons
-                        name="link-outline"
-                        size={17}
-                        color="#ffffff"
-                      />
-                    </View>
+          <Animated.View style={trustEntrance}>
+            <TrustNote
+              title="Conexão segura"
+              description="O acesso é realizado através do Open Finance. Você não precisa compartilhar sua senha bancária com o Econva."
+            />
+          </Animated.View>
+        </Reanimated.View>
+      )}
+    </ScrollScreen>
+  );
+}
 
-                    <Text
-                      style={styles.buttonText}
-                    >
-                      Conectar minha conta
-                    </Text>
-
-                    <Ionicons
-                      name="arrow-forward"
-                      size={18}
-                      color="#ffffff"
-                    />
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* SECURITY */}
-            <View style={styles.infoCard}>
-              <View style={styles.infoIcon}>
-                <Ionicons
-                  name="shield-checkmark-outline"
-                  size={20}
-                  color="#2563eb"
-                />
-              </View>
-
-              <View
-                style={styles.infoContent}
-              >
-                <Text
-                  style={styles.infoEyebrow}
-                >
-                  SEGURANÇA
-                </Text>
-
-                <Text
-                  style={styles.infoTitle}
-                >
-                  Conexão segura
-                </Text>
-
-                <Text style={styles.infoText}>
-                  O acesso é realizado através do
-                  Open Finance. Você não precisa
-                  compartilhar sua senha bancária
-                  com o gFinance.
-                </Text>
-              </View>
-            </View>
-          </>
-        )}
-      </ScrollView>
+function TrustNote({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <View style={styles.trust}>
+      <View style={styles.trustRow}>
+        <View style={styles.trustIcon}>
+          <Ionicons name="shield-checkmark" size={16} color={appColors.accentBright} />
+        </View>
+        <View style={styles.trustText}>
+          <AppText variant="captionStrong" tone="primary">
+            {title}
+          </AppText>
+          <AppText variant="caption" tone="secondary">
+            {description}
+          </AppText>
+        </View>
+      </View>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  pluggy: {
     flex: 1,
-    backgroundColor: '#f5f7fb',
-  },
-
-  pluggyContainer: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 54,
-    paddingBottom: 120,
-  },
-
-  /* HEADER */
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-
-  headerTextContainer: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 16,
-  },
-
-  eyebrow: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    color: '#2563eb',
-    marginBottom: 5,
+    backgroundColor: appColors.canvas,
   },
 
   title: {
-    fontSize: 28,
-    lineHeight: 34,
-    fontWeight: '800',
-    color: '#101828',
+    marginTop: appSpace.xs,
+    marginBottom: appSpace.xs,
   },
 
   subtitle: {
-    marginTop: 6,
-    maxWidth: 310,
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#667085',
+    marginBottom: appSpace.xxl,
   },
 
-  headerIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  /* CONNECTION */
-
-  statusCard: {
-    minHeight: 82,
-    padding: 15,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e4e7ec',
+  /* Status */
+  statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: appSpace.lg,
   },
 
   statusIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: '#eaf7ef',
+    width: 48,
+    height: 48,
+    borderRadius: appRadius.control,
+    backgroundColor: appColors.incomeSubtle,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
   },
 
-  statusContent: {
+  statusText: {
     flex: 1,
     minWidth: 0,
+    gap: 3,
   },
 
-  statusEyebrow: {
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: '#98a2b3',
-    marginBottom: 3,
+  /* Blocks */
+  block: {
+    marginTop: appSpace.xxl,
   },
 
-  statusTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#101828',
+  /* Accounts */
+  account: {
+    paddingBottom: appSpace.lg,
   },
 
-  activeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 4,
+  accountDivided: {
+    paddingTop: appSpace.sm,
+    borderTopWidth: 1,
+    borderTopColor: appColors.border,
   },
 
-  activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#16a34a',
-    marginRight: 5,
+  accountBalance: {
+    paddingLeft: ACCOUNT_TEXT_INDENT,
+    marginTop: appSpace.xs,
+    gap: appSpace.xs,
   },
-
-  activeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#16803c',
-  },
-
-  connectedBadge: {
-    paddingHorizontal: 9,
-    paddingVertical: 6,
-    borderRadius: 9,
-    backgroundColor: '#eaf7ef',
-    marginLeft: 8,
-  },
-
-  connectedText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#16803c',
-  },
-
-  /* SECTION */
-
-  section: {
-    marginTop: 26,
-  },
-
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-
-  sectionEyebrow: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.1,
-    color: '#98a2b3',
-    marginBottom: 3,
-  },
-
-  sectionTitle: {
-    fontSize: 19,
-    fontWeight: '700',
-    color: '#101828',
-  },
-
-  countBadge: {
-    minWidth: 30,
-    height: 28,
-    paddingHorizontal: 9,
-    borderRadius: 10,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  countText: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#2563eb',
-  },
-
-  /* ACCOUNT */
-
-  accountCard: {
-    padding: 18,
-    borderRadius: 21,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#eaecf0',
-    marginBottom: 12,
-  },
-
-  accountHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  accountIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
-
-  accountHeaderContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  accountName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#101828',
-  },
-
-  accountType: {
-    marginTop: 4,
-    fontSize: 11,
-    color: '#667085',
-  },
-
-  accountArrow: {
-    width: 30,
-    height: 30,
-    borderRadius: 10,
-    backgroundColor: '#f5f7fa',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-
-  balanceContainer: {
-    marginTop: 22,
-  },
-
-  balanceLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#98a2b3',
-  },
-
-  balance: {
-    marginTop: 4,
-    maxWidth: '100%',
-    fontSize: 27,
-    lineHeight: 34,
-    fontWeight: '800',
-    color: '#101828',
-  },
-
-  /* CREDIT */
 
   creditDetails: {
-    marginTop: 17,
-    paddingTop: 13,
+    paddingLeft: ACCOUNT_TEXT_INDENT,
+    marginTop: appSpace.lg,
+    paddingTop: appSpace.md,
     borderTopWidth: 1,
-    borderTopColor: '#f0f2f5',
+    borderTopColor: appColors.border,
+    gap: appSpace.sm,
   },
 
   creditRow: {
-    minHeight: 28,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
 
-  creditLabelContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-
-  creditLabel: {
-    fontSize: 11,
-    color: '#667085',
-  },
-
-  creditValue: {
-    flexShrink: 1,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#344054',
-    textAlign: 'right',
-  },
-
-  /* SECURITY */
-
-  infoCard: {
-    marginTop: 16,
-    padding: 16,
-    borderRadius: 18,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#eaecf0',
-    flexDirection: 'row',
-  },
-
-  infoIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  infoContent: {
-    flex: 1,
-    minWidth: 0,
-    marginLeft: 11,
-  },
-
-  infoEyebrow: {
-    fontSize: 8,
-    fontWeight: '800',
-    letterSpacing: 1,
-    color: '#2563eb',
-    marginBottom: 3,
-  },
-
-  infoTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#101828',
-  },
-
-  infoText: {
-    marginTop: 4,
-    fontSize: 11,
-    lineHeight: 17,
-    color: '#667085',
-  },
-
-  /* EMPTY */
-
-  emptyCard: {
-    padding: 24,
-    borderRadius: 24,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#eaecf0',
-    alignItems: 'center',
-  },
-
-  emptyIconOuter: {
-    width: 76,
-    height: 76,
-    borderRadius: 25,
-    backgroundColor: '#f4f8ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 17,
-  },
-
+  /* Empty */
   emptyIcon: {
     width: 56,
     height: 56,
-    borderRadius: 18,
-    backgroundColor: '#eaf2ff',
+    borderRadius: appRadius.control,
+    backgroundColor: appColors.accentWash,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-
-  emptyEyebrow: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.1,
-    color: '#2563eb',
-    marginBottom: 6,
+    marginBottom: appSpace.lg,
   },
 
   emptyTitle: {
-    fontSize: 20,
-    lineHeight: 26,
-    fontWeight: '800',
-    color: '#101828',
-    textAlign: 'center',
+    marginBottom: appSpace.xs,
   },
 
   emptyText: {
-    marginTop: 8,
-    maxWidth: 300,
-    fontSize: 13,
-    lineHeight: 20,
-    color: '#667085',
-    textAlign: 'center',
+    marginBottom: appSpace.xl,
   },
 
-  /* BUTTON */
+  emptyAction: {
+    marginTop: appSpace.sm,
+  },
 
-  button: {
-    width: '100%',
-    minHeight: 54,
-    marginTop: 22,
-    paddingHorizontal: 15,
-    borderRadius: 16,
-    backgroundColor: '#101828',
+  /* Trust */
+  trust: {
+    marginTop: appSpace.xxl,
+    paddingTop: appSpace.lg,
+    borderTopWidth: 1,
+    borderTopColor: appColors.border,
+  },
+
+  trustRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 9,
+    alignItems: 'flex-start',
+    gap: appSpace.md,
   },
 
-  buttonLoading: {
-    opacity: 0.8,
-  },
-
-  buttonIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 9,
-    backgroundColor: '#2563eb',
+  trustIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: appRadius.md,
+    backgroundColor: appColors.accentWash,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  buttonText: {
-    flexShrink: 1,
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#ffffff',
+  trustText: {
+    flex: 1,
+    gap: 2,
   },
-})
+});

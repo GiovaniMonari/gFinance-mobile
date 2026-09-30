@@ -1,55 +1,78 @@
-import { useCallback, useState } from 'react'
-import {
-  Alert,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import {
-  NativeStackScreenProps,
-} from '@react-navigation/native-stack'
-import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native'
+/**
+ * Econva — Goals
+ *
+ * Goals communicate progress, target and remaining amount without becoming
+ * gamified. The brand accent carries the progress; semantic colour appears only
+ * where it means something: a completed goal, an expired one.
+ *
+ * Each goal is a row in a list, not a card floating in space, so the screen
+ * stays calm as the number of goals grows.
+ *
+ * Data, calculations and navigation are unchanged.
+ */
 
-import { getGoals } from '../api/goalApi'
-import type {
-  FinancialGoal,
-  GoalStatus,
-} from '../types/goal'
+import { useCallback, useState } from 'react';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
+import Reanimated, {
+  FadeInDown,
+  LinearTransition,
+} from 'react-native-reanimated';
+import { Ionicons } from '@expo/vector-icons';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { CompositeScreenProps, useFocusEffect } from '@react-navigation/native';
+import type { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { getGoals } from '../api/goalApi';
+import type { FinancialGoal, GoalStatus } from '../types/goal';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import { AppLoading } from '../components/AppLoading';
+import type { TabParamList } from '../navigation/TabNavigator';
+import { appColors, appMotion, appMotionScale, appRadius, appSpace } from '../theme/app';
+import { Button, Progress, ProgressLabel, useEntrance } from '../components/ui';
+import {
+  AppText,
+  EmptyState,
+  Metric,
+  MetricDivider,
+  ScrollScreen,
+  Section,
+  Surface,
+  showAlert,
+  usePressScale,
+} from '../components/app';
 
-import type { RootStackParamList } from '../navigation/AppNavigator'
-import { AppLoading } from '../components/AppLoading'
-import { TabParamList } from '../navigation/TabNavigator'
-import { BottomTabScreenProps } from '@react-navigation/bottom-tabs'
+/*
+ * Layout animation definitions live at module scope, not inline in JSX.
+ * `FadeInDown.duration(...)` builds a new object every time it is called, and
+ * an `entering` prop that changes identity re-triggers the entrance — so a
+ * screen that merely re-renders would replay its fade from zero opacity and
+ * look like it had blanked. Stable references, stable behaviour.
+ */
+const ROW_LAYOUT = LinearTransition.duration(appMotion.layout);
+
+/** Pre-built staggered entrances, so a row's animation never changes identity. */
+const ROW_ENTER = Array.from({ length: 9 }, (_, i) =>
+  FadeInDown.duration(appMotion.layout).delay(i * appMotion.stagger),
+);
 
 type Props = CompositeScreenProps<
   BottomTabScreenProps<TabParamList, 'Goals'>,
   NativeStackScreenProps<RootStackParamList>
->
+>;
 
 function formatCurrency(value: number) {
   return value.toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL',
-  })
+  });
 }
 
 function formatDeadline(deadline: string | null) {
-  if (!deadline) {
-    return 'Sem prazo'
-  }
-
-  return new Date(deadline).toLocaleDateString(
-    'pt-BR',
-    {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    },
-  )
+  if (!deadline) return 'Sem prazo';
+  return new Date(deadline).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 }
 
 function getStatusConfig(status: GoalStatus) {
@@ -57,211 +80,145 @@ function getStatusConfig(status: GoalStatus) {
     case 'COMPLETED':
       return {
         label: 'Concluída',
-        color: '#16803c',
-        background: '#ecfdf3',
+        color: appColors.income,
+        background: appColors.incomeSubtle,
         icon: 'checkmark-circle' as const,
-      }
-
+        tone: 'income' as const,
+      };
     case 'OVERDUE':
       return {
         label: 'Prazo encerrado',
-        color: '#dc2626',
-        background: '#fef2f2',
+        color: appColors.expense,
+        background: appColors.expenseSubtle,
         icon: 'alert-circle' as const,
-      }
-
+        tone: 'expense' as const,
+      };
     default:
       return {
         label: 'Em andamento',
-        color: '#2563eb',
-        background: '#eaf2ff',
+        color: appColors.accentBright,
+        background: appColors.accentWash,
         icon: 'flag' as const,
-      }
+        tone: 'accent' as const,
+      };
   }
 }
 
-function GoalCard({
+function GoalRow({
   goal,
   onPress,
+  isFirst,
 }: {
-  goal: FinancialGoal
-  onPress: () => void
+  goal: FinancialGoal;
+  onPress: () => void;
+  isFirst: boolean;
 }) {
-  const status = getStatusConfig(goal.status)
+  const status = getStatusConfig(goal.status);
+  const progress = Math.min(Math.max(goal.progress, 0), 100);
+  const tone = status.tone;
 
-  const progress = Math.min(
-    Math.max(goal.progress, 0),
-    100,
-  )
+  const { style: pressStyle, onPressIn, onPressOut } = usePressScale({
+    scale: appMotionScale.row,
+    dim: 0.6,
+  });
 
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.goalCard,
-        pressed && styles.goalCardPressed,
-      ]}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      accessibilityRole="button"
+      accessibilityLabel={`Abrir meta ${goal.name}`}
+      style={[styles.goal, !isFirst && styles.goalDivided]}
     >
+      <Reanimated.View style={pressStyle}>
       <View style={styles.goalHeader}>
-        <View style={styles.goalIcon}>
-          <Ionicons
-            name={
-              goal.status === 'COMPLETED'
-                ? 'checkmark'
-                : 'flag'
-            }
-            size={19}
-            color="#2563eb"
-          />
-        </View>
-
-        <View style={styles.goalTitleContainer}>
-          <Text
-            style={styles.goalName}
-            numberOfLines={1}
-          >
-            {goal.name}
-          </Text>
-
-          <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor:
-                  status.background,
-              },
-            ]}
-          >
-            <Ionicons
-              name={status.icon}
-              size={12}
-              color={status.color}
-            />
-
-            <Text
-              style={[
-                styles.statusText,
-                {
-                  color: status.color,
-                },
-              ]}
-            >
-              {status.label}
-            </Text>
-          </View>
-        </View>
-
-        <Ionicons
-          name="chevron-forward"
-          size={19}
-          color="#98a2b3"
-        />
+        <AppText variant="section" tone="primary" numberOfLines={1} style={styles.goalName}>
+          {goal.name}
+        </AppText>
+        <Ionicons name="chevron-forward" size={16} color={appColors.textTertiary} />
       </View>
 
-      <View style={styles.goalAmounts}>
-        <View>
-          <Text style={styles.amountLabel}>
-            Acumulado
-          </Text>
-
-          <Text style={styles.currentAmount}>
-            {formatCurrency(goal.currentAmount)}
-          </Text>
+      <View style={styles.goalMeta}>
+        <View style={[styles.statusPill, { backgroundColor: status.background }]}>
+          <Ionicons name={status.icon} size={11} color={status.color} />
+          <AppText variant="micro" color={status.color}>
+            {status.label.toUpperCase()}
+          </AppText>
         </View>
 
-        <View style={styles.targetAmountContainer}>
-          <Text style={styles.amountLabel}>
-            Objetivo
-          </Text>
-
-          <Text style={styles.targetAmount}>
-            {formatCurrency(goal.targetAmount)}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.progressRow}>
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              {
-                width: `${progress}%`,
-              },
-            ]}
-          />
-        </View>
-
-        <Text style={styles.progressText}>
-          {goal.progress.toFixed(0)}%
-        </Text>
-      </View>
-
-      <View style={styles.goalFooter}>
-        <View style={styles.footerItem}>
-          <Ionicons
-            name="calendar-outline"
-            size={14}
-            color="#98a2b3"
-          />
-
-          <Text style={styles.footerText}>
+        <View style={styles.deadline}>
+          <Ionicons name="calendar-outline" size={12} color={appColors.textTertiary} />
+          <AppText variant="meta" tone="tertiary" numberOfLines={1}>
             {formatDeadline(goal.deadline)}
-          </Text>
+          </AppText>
         </View>
-
-        <Text style={styles.remainingText}>
-          {goal.status === 'COMPLETED'
-            ? 'Objetivo alcançado'
-            : `${formatCurrency(
-                Math.max(goal.remainingAmount, 0),
-              )} restantes`}
-        </Text>
       </View>
+
+      <View style={styles.goalValues}>
+        <AppText variant="valueLarge" tone="primary">
+          {formatCurrency(goal.currentAmount)}
+        </AppText>
+        <AppText variant="amount" tone="tertiary">
+          de {formatCurrency(goal.targetAmount)}
+        </AppText>
+      </View>
+
+      <View style={styles.goalProgress}>
+        <Progress value={progress} size="thin" tone={tone} animate={false} />
+        <ProgressLabel value={progress} tone={tone} style={styles.goalPercent} />
+      </View>
+
+      <AppText variant="meta" tone="tertiary" style={styles.goalRemaining}>
+        {goal.status === 'COMPLETED'
+          ? 'Objetivo alcançado'
+          : `${formatCurrency(Math.max(goal.remainingAmount, 0))} restantes`}
+      </AppText>
+      </Reanimated.View>
     </Pressable>
-  )
+  );
 }
 
-export function GoalsScreen({
-  navigation,
-}: Props) {
-  const [goals, setGoals] =
-    useState<FinancialGoal[]>([])
-
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] =
-    useState(false)
+export function GoalsScreen({ navigation }: Props) {
+  const [goals, setGoals] = useState<FinancialGoal[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
   const loadGoals = useCallback(
     async (showLoading = true) => {
       try {
-        if (showLoading) {
-          setLoading(true)
-        }
-
-        const data = await getGoals()
-
-        setGoals(data)
+        if (showLoading) setLoading(true);
+        const data = await getGoals();
+        setGoals(data);
       } catch (error) {
         const message =
           error instanceof Error
             ? error.message
-            : 'Não foi possível carregar suas metas.'
-
-        Alert.alert('Erro', message)
+            : 'Não foi possível carregar suas metas.';
+        showAlert({ title: 'Erro', message, tone: 'danger' });
       } finally {
-        setLoading(false)
-        setRefreshing(false)
+        setLoading(false);
+        setRefreshing(false);
       }
     },
     [],
-  )
+  );
 
   useFocusEffect(
     useCallback(() => {
-      loadGoals()
+      loadGoals();
     }, [loadGoals]),
-  )
+  );
+
+  const headerEntrance = useEntrance({ start: !loading });
+  const summaryEntrance = useEntrance({
+    start: !loading,
+    delay: appMotion.stagger,
+  });
+  const listEntrance = useEntrance({
+    start: !loading,
+    delay: appMotion.stagger * 2,
+  });
 
   if (loading) {
     return (
@@ -269,560 +226,238 @@ export function GoalsScreen({
         message="Carregando suas metas"
         description="Buscando seus objetivos financeiros"
       />
-    )
+    );
   }
 
-  const totalTarget = goals.reduce(
-    (total, goal) => total + goal.targetAmount,
-    0,
-  )
-
-  const totalCurrent = goals.reduce(
-    (total, goal) => total + goal.currentAmount,
-    0,
-  )
-
-  const completedGoals = goals.filter(
-    (goal) => goal.status === 'COMPLETED',
-  ).length
-
+  const totalTarget = goals.reduce((sum, g) => sum + g.targetAmount, 0);
+  const totalCurrent = goals.reduce((sum, g) => sum + g.currentAmount, 0);
+  const completedGoals = goals.filter((g) => g.status === 'COMPLETED').length;
   const overallProgress =
-    totalTarget > 0
-      ? Math.min(
-          (totalCurrent / totalTarget) * 100,
-          100,
-        )
-      : 0
+    totalTarget > 0 ? Math.min((totalCurrent / totalTarget) * 100, 100) : 0;
 
   return (
-    <View style={styles.container}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => {
-              setRefreshing(true)
-              loadGoals(false)
-            }}
-            tintColor="#2563eb"
+    <ScrollScreen
+      tabBar
+      refreshing={refreshing}
+      onRefresh={() => {
+        setRefreshing(true);
+        loadGoals(false);
+      }}
+    >
+      <Animated.View style={headerEntrance}>
+        <AppText variant="micro" tone="tertiary">
+          PLANEJAMENTO
+        </AppText>
+        <AppText variant="screenTitle" tone="primary" style={styles.title}>
+          Minhas metas
+        </AppText>
+        <AppText variant="bodySmall" tone="secondary" style={styles.subtitle}>
+          Transforme seus objetivos em planos.
+        </AppText>
+
+        {goals.length > 0 ? (
+          <Button
+            title="Nova meta"
+            onPress={() => navigation.navigate('CreateGoal')}
+            size="md"
+            icon="add"
+            fullWidth
+            style={styles.newGoalButton}
           />
-        }
-        contentContainerStyle={styles.content}
-      >
-        <View style={styles.header}>
-          <View>
-            <Text style={styles.eyebrow}>
-              PLANEJAMENTO
-            </Text>
+        ) : null}
+      </Animated.View>
 
-            <Text style={styles.title}>
-              Minhas metas
-            </Text>
-
-            <Text style={styles.subtitle}>
-              Transforme seus objetivos em planos.
-            </Text>
-          </View>
-
-          <Pressable
-            onPress={() =>
-              navigation.navigate('CreateGoal')
-            }
-            style={styles.addButton}
-          >
-            <Ionicons
-              name="add"
-              size={22}
-              color="#ffffff"
-            />
-          </Pressable>
+      {goals.length === 0 ? (
+        <View style={styles.empty}>
+          <EmptyState
+            icon="flag-outline"
+            title="Comece sua primeira meta"
+            description="Crie um objetivo financeiro e acompanhe seu progresso de forma simples."
+            actionLabel="Criar primeira meta"
+            onActionPress={() => navigation.navigate('CreateGoal')}
+          />
         </View>
+      ) : (
+        <>
+          <Animated.View style={summaryEntrance}>
+            <Surface variant="elevated" radius="panel" padding="xl">
+              <AppText variant="micro" tone="tertiary">
+                PROGRESSO GERAL
+              </AppText>
 
-        {goals.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIcon}>
-              <Ionicons
-                name="flag-outline"
-                size={31}
-                color="#2563eb"
-              />
-            </View>
-
-            <Text style={styles.emptyTitle}>
-              Comece sua primeira meta
-            </Text>
-
-            <Text style={styles.emptyDescription}>
-              Crie um objetivo financeiro e acompanhe
-              seu progresso de forma simples.
-            </Text>
-
-            <Pressable
-              onPress={() =>
-                navigation.navigate('CreateGoal')
-              }
-              style={styles.emptyButton}
-            >
-              <Ionicons
-                name="add"
-                size={18}
-                color="#ffffff"
-              />
-
-              <Text style={styles.emptyButtonText}>
-                Criar primeira meta
-              </Text>
-            </Pressable>
-          </View>
-        ) : (
-          <>
-            <View style={styles.summaryCard}>
-              <View style={styles.summaryHeader}>
-                <View>
-                  <Text style={styles.summaryLabel}>
-                    Progresso geral
-                  </Text>
-
-                  <Text style={styles.summaryValue}>
-                    {formatCurrency(totalCurrent)}
-                  </Text>
-                </View>
-
-                <View style={styles.summaryPercentage}>
-                  <Text
-                    style={
-                      styles.summaryPercentageText
-                    }
-                  >
-                    {overallProgress.toFixed(0)}%
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.summaryTrack}>
-                <View
-                  style={[
-                    styles.summaryFill,
-                    {
-                      width: `${overallProgress}%`,
-                    },
-                  ]}
-                />
-              </View>
-
-              <View style={styles.summaryFooter}>
-                <Text style={styles.summaryFooterText}>
-                  de {formatCurrency(totalTarget)}
-                </Text>
-
-                <Text style={styles.summaryFooterText}>
-                  {completedGoals}{' '}
-                  {completedGoals === 1
-                    ? 'concluída'
-                    : 'concluídas'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.sectionHeader}>
-              <View>
-                <Text style={styles.sectionTitle}>
-                  Seus objetivos
-                </Text>
-
-                <Text style={styles.sectionDescription}>
-                  {goals.length}{' '}
-                  {goals.length === 1
-                    ? 'meta ativa'
-                    : 'metas ativas'}
-                </Text>
-              </View>
-
-              <Pressable
-                onPress={() =>
-                  navigation.navigate('CreateGoal')
-                }
-                style={styles.newGoalLink}
+              <AppText
+                variant="value"
+                tone="primary"
+                style={styles.summaryValue}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.6}
               >
-                <Ionicons
-                  name="add"
-                  size={17}
-                  color="#2563eb"
+                {formatCurrency(totalCurrent)}
+              </AppText>
+
+              <View style={styles.summaryProgress}>
+                <Progress value={overallProgress} size="regular" marker />
+                <ProgressLabel value={overallProgress} style={styles.summaryPercent} />
+              </View>
+
+              <View style={styles.metrics}>
+                <Metric
+                  label="Objetivo total"
+                  value={formatCurrency(totalTarget)}
                 />
+                <MetricDivider style={styles.metricsDivider} />
+                <Metric
+                  label="Concluídas"
+                  value={String(completedGoals)}
+                  tone={completedGoals > 0 ? 'positive' : 'primary'}
+                  align="end"
+                />
+              </View>
+            </Surface>
+          </Animated.View>
 
-                <Text style={styles.newGoalText}>
-                  Nova meta
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.goalsList}>
-              {goals.map((goal) => (
-                <GoalCard
+          <Animated.View style={[listEntrance, styles.list]}>
+            <Section
+              title="Seus objetivos"
+              description={`${goals.length} ${goals.length === 1 ? 'meta ativa' : 'metas ativas'}`}
+            >
+              {goals.map((goal, index) => (
+                <Reanimated.View
                   key={goal.id}
-                  goal={goal}
-                  onPress={() =>
-                    navigation.navigate(
-                      'GoalDetails',
-                      {
-                        goalId: goal.id,
-                      },
-                    )
-                  }
-                />
+                  entering={ROW_ENTER[Math.min(index, 8)]}
+                  layout={ROW_LAYOUT}
+                >
+                  <GoalRow
+                    goal={goal}
+                    isFirst={index === 0}
+                    onPress={() =>
+                      navigation.navigate('GoalDetails', { goalId: goal.id })
+                    }
+                  />
+                </Reanimated.View>
               ))}
-            </View>
-          </>
-        )}
-      </ScrollView>
-    </View>
-  )
+            </Section>
+          </Animated.View>
+        </>
+      )}
+    </ScrollScreen>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f7fb',
-  },
-
-  content: {
-    paddingHorizontal: 20,
-    paddingTop: 58,
-    paddingBottom: 120,
-  },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 24,
-  },
-
-  eyebrow: {
-    fontSize: 9,
-    fontWeight: '800',
-    letterSpacing: 1.1,
-    color: '#98a2b3',
-    marginBottom: 4,
-  },
-
   title: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: '#101828',
+    marginTop: appSpace.xs,
+    marginBottom: appSpace.xs,
   },
 
   subtitle: {
-    marginTop: 5,
-    fontSize: 12,
-    color: '#98a2b3',
+    marginBottom: appSpace.xl,
   },
 
-  addButton: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    backgroundColor: '#2563eb',
-    alignItems: 'center',
-    justifyContent: 'center',
+  newGoalButton: {
+    marginBottom: appSpace.xxl,
   },
 
-  summaryCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 23,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: '#eaecf0',
-    marginBottom: 25,
+  empty: {
+    marginTop: appSpace.xxxl,
   },
 
-  summaryHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 18,
-  },
-
-  summaryLabel: {
-    fontSize: 11,
-    color: '#98a2b3',
-    fontWeight: '600',
-    marginBottom: 5,
-  },
-
+  /* Summary */
   summaryValue: {
-    fontSize: 23,
-    fontWeight: '800',
-    color: '#101828',
+    marginTop: appSpace.md,
+    marginBottom: appSpace.lg,
   },
 
-  summaryPercentage: {
-    width: 54,
-    height: 54,
-    borderRadius: 17,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  summaryPercentageText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#2563eb',
-  },
-
-  summaryTrack: {
-    height: 9,
-    borderRadius: 10,
-    backgroundColor: '#eef2f6',
-    overflow: 'hidden',
-  },
-
-  summaryFill: {
-    height: '100%',
-    backgroundColor: '#2563eb',
-    borderRadius: 10,
-  },
-
-  summaryFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 11,
-  },
-
-  summaryFooterText: {
-    fontSize: 11,
-    color: '#98a2b3',
-    fontWeight: '600',
-  },
-
-  sectionHeader: {
+  summaryProgress: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 13,
+    gap: appSpace.md,
   },
 
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#101828',
+  summaryPercent: {
+    width: 52,
+    textAlign: 'right',
   },
 
-  sectionDescription: {
-    fontSize: 11,
-    color: '#98a2b3',
-    marginTop: 3,
-  },
-
-  newGoalLink: {
+  metrics: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    paddingVertical: 6,
+    marginTop: appSpace.xl,
   },
 
-  newGoalText: {
-    fontSize: 12,
-    color: '#2563eb',
-    fontWeight: '800',
+  metricsDivider: {
+    height: 40,
   },
 
-  goalsList: {
-    gap: 12,
+  /* List */
+  list: {
+    marginTop: appSpace.xxl,
   },
 
-  goalCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 21,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#eaecf0',
+  goal: {
+    paddingVertical: appSpace.lg,
   },
 
-  goalCardPressed: {
-    opacity: 0.72,
+  goalDivided: {
+    borderTopWidth: 1,
+    borderTopColor: appColors.border,
   },
 
   goalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-
-  goalIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 11,
-  },
-
-  goalTitleContainer: {
-    flex: 1,
+    gap: appSpace.md,
+    marginBottom: appSpace.sm,
   },
 
   goalName: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#101828',
-    marginBottom: 6,
-  },
-
-  statusBadge: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    borderRadius: 20,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-
-  statusText: {
-    fontSize: 9,
-    fontWeight: '800',
-  },
-
-  goalAmounts: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 18,
-    marginBottom: 13,
-  },
-
-  amountLabel: {
-    fontSize: 10,
-    color: '#98a2b3',
-    marginBottom: 4,
-  },
-
-  currentAmount: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#101828',
-  },
-
-  targetAmountContainer: {
-    alignItems: 'flex-end',
-  },
-
-  targetAmount: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#667085',
-  },
-
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-
-  progressTrack: {
     flex: 1,
-    height: 8,
-    borderRadius: 10,
-    backgroundColor: '#eef2f6',
-    overflow: 'hidden',
   },
 
-  progressFill: {
-    height: '100%',
-    borderRadius: 10,
-    backgroundColor: '#2563eb',
-  },
-
-  progressText: {
-    width: 34,
-    textAlign: 'right',
-    fontSize: 11,
-    fontWeight: '800',
-    color: '#344054',
-  },
-
-  goalFooter: {
+  goalMeta: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 14,
-    paddingTop: 13,
-    borderTopWidth: 1,
-    borderTopColor: '#f2f4f7',
+    gap: appSpace.md,
+    marginBottom: appSpace.lg,
   },
 
-  footerItem: {
+  statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: appSpace.xs,
+    paddingHorizontal: appSpace.sm,
+    paddingVertical: 3,
+    borderRadius: appRadius.full,
   },
 
-  footerText: {
-    fontSize: 10,
-    color: '#98a2b3',
-  },
-
-  remainingText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#667085',
-    marginLeft: 8,
-  },
-
-  emptyContainer: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: '#eaecf0',
-    paddingHorizontal: 25,
-    paddingVertical: 42,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-
-  emptyIcon: {
-    width: 68,
-    height: 68,
-    borderRadius: 22,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 19,
-  },
-
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#101828',
-    textAlign: 'center',
-  },
-
-  emptyDescription: {
-    fontSize: 12,
-    lineHeight: 19,
-    color: '#98a2b3',
-    textAlign: 'center',
-    marginTop: 7,
-    maxWidth: 280,
-  },
-
-  emptyButton: {
-    height: 48,
-    paddingHorizontal: 18,
-    borderRadius: 15,
-    backgroundColor: '#2563eb',
+  deadline: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    marginTop: 22,
+    gap: appSpace.xs,
+    flexShrink: 1,
   },
 
-  emptyButtonText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '800',
+  goalValues: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: appSpace.sm,
+    marginBottom: appSpace.md,
   },
-})
+
+  goalProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: appSpace.md,
+  },
+
+  goalPercent: {
+    width: 44,
+    textAlign: 'right',
+  },
+
+  goalRemaining: {
+    marginTop: appSpace.sm,
+  },
+});

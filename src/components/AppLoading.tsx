@@ -1,172 +1,136 @@
+/**
+ * Econva — App Loading
+ *
+ * The loading state for the authenticated app. It continues the language of
+ * the First Access screen: a mark that breathes inside a ring of light, with
+ * the message beneath it. No spinner, no white box.
+ */
 
-import { useEffect, useRef } from 'react'
-import {
-  Animated,
-  Easing,
-  Image,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native'
+import { useEffect, useState } from 'react';
+import { AccessibilityInfo, Animated, Easing, StyleSheet, View } from 'react-native';
+import { appColors, appMotion, appSpace, appType } from '../theme/app';
+import { Logo } from './ui';
 
 type AppLoadingProps = {
-  message?: string
-  description?: string
-}
+  message?: string;
+  description?: string;
+};
 
 export function AppLoading({
   message = 'Organizando seus dados',
   description = 'Isso leva só um momento',
 }: AppLoadingProps) {
-  const pulse = useRef(
-    new Animated.Value(0.75),
-  ).current
-
-  const dot1 = useRef(
-    new Animated.Value(0.35),
-  ).current
-
-  const dot2 = useRef(
-    new Animated.Value(0.35),
-  ).current
-
-  const dot3 = useRef(
-    new Animated.Value(0.35),
-  ).current
+  const [pulse] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
-    const pulseAnimation =
-      Animated.loop(
+    let cancelled = false;
+    let loop: Animated.CompositeAnimation | undefined;
+
+    AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (cancelled) return;
+      if (enabled) {
+        pulse.setValue(1);
+        return;
+      }
+
+      loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulse, {
             toValue: 1,
-            duration: 900,
-            easing: Easing.inOut(
-              Easing.ease,
-            ),
+            duration: appMotion.pulse,
+            easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
           Animated.timing(pulse, {
-            toValue: 0.75,
-            duration: 900,
-            easing: Easing.inOut(
-              Easing.ease,
-            ),
+            toValue: 0,
+            duration: appMotion.pulse,
+            easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
         ]),
-      )
+      );
 
-    const createDotAnimation = (
-      value: Animated.Value,
-      delay: number,
-    ) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-
-          Animated.timing(value, {
-            toValue: 1,
-            duration: 350,
-            easing: Easing.inOut(
-              Easing.ease,
-            ),
-            useNativeDriver: true,
-          }),
-
-          Animated.timing(value, {
-            toValue: 0.35,
-            duration: 350,
-            easing: Easing.inOut(
-              Easing.ease,
-            ),
-            useNativeDriver: true,
-          }),
-
-          Animated.delay(500),
-        ]),
-      )
-
-    pulseAnimation.start()
-
-    const dot1Animation =
-      createDotAnimation(dot1, 0)
-
-    const dot2Animation =
-      createDotAnimation(dot2, 180)
-
-    const dot3Animation =
-      createDotAnimation(dot3, 360)
-
-    dot1Animation.start()
-    dot2Animation.start()
-    dot3Animation.start()
+      loop.start();
+    });
 
     return () => {
-      pulseAnimation.stop()
-      dot1Animation.stop()
-      dot2Animation.stop()
-      dot3Animation.stop()
-    }
-  }, [pulse, dot1, dot2, dot3])
+      cancelled = true;
+      loop?.stop();
+    };
+  }, [pulse]);
 
   return (
     <View style={styles.container}>
-      <Animated.View
-        style={[
-          styles.logoContainer,
-          {
-            opacity: pulse,
+      <View style={styles.artwork}>
+        <Animated.View
+          style={[
+            styles.ring,
+            {
+              opacity: pulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.3, 0.75],
+              }),
+              transform: [
+                {
+                  scale: pulse.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0.86, 1.08],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+
+        <Animated.View
+          style={{
+            opacity: pulse.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.7, 1],
+            }),
             transform: [
               {
                 scale: pulse.interpolate({
-                  inputRange: [0.75, 1],
+                  inputRange: [0, 1],
                   outputRange: [0.96, 1],
                 }),
               },
             ],
+          }}
+        >
+          <Logo variant="mark" size={44} />
+        </Animated.View>
+      </View>
+
+      <Animated.Text
+        style={[
+          styles.message,
+          {
+            opacity: pulse.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.6, 1],
+            }),
           },
         ]}
       >
-        <Image
-          source={require('../../assets/logogFinance.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-      </Animated.View>
-
-      <Text style={styles.message}>
         {message}
-      </Text>
+      </Animated.Text>
 
-      <Text style={styles.description}>
+      <Animated.Text
+        style={[
+          styles.description,
+          {
+            opacity: pulse.interpolate({
+              inputRange: [0, 1],
+              outputRange: [0.25, 0.6],
+            }),
+          },
+        ]}
+      >
         {description}
-      </Text>
-
-      <View style={styles.dots}>
-        <Animated.View
-          style={[
-            styles.dot,
-            { opacity: dot1 },
-          ]}
-        />
-
-        <Animated.View
-          style={[
-            styles.dot,
-            { opacity: dot2 },
-          ]}
-        />
-
-        <Animated.View
-          style={[
-            styles.dot,
-            { opacity: dot3 },
-          ]}
-        />
-      </View>
+      </Animated.Text>
     </View>
-  )
+  );
 }
 
 const styles = StyleSheet.create({
@@ -174,48 +138,37 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#f5f7fb',
-    paddingHorizontal: 30,
+    backgroundColor: appColors.canvas,
+    paddingHorizontal: appSpace.xxl,
   },
 
-  logoContainer: {
-    width: 82,
-    height: 82,
+  artwork: {
+    width: 128,
+    height: 128,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 26,
+    marginBottom: appSpace.xxl,
   },
 
-  logo: {
-    width: 72,
-    height: 72,
+  ring: {
+    position: 'absolute',
+    width: 116,
+    height: 116,
+    borderRadius: 58,
+    borderWidth: 1,
+    borderColor: appColors.accentBright,
   },
 
   message: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#101828',
+    ...appType.bodyMedium,
+    color: appColors.textPrimary,
     textAlign: 'center',
   },
 
   description: {
-    marginTop: 6,
-    fontSize: 12,
-    color: '#98a2b3',
+    ...appType.caption,
+    color: appColors.textTertiary,
     textAlign: 'center',
+    marginTop: appSpace.xs,
   },
-
-  dots: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 18,
-  },
-
-  dot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#2563eb',
-  },
-})
+});

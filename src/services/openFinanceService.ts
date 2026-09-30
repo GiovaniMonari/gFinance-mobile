@@ -1,3 +1,5 @@
+// Fixed Railway host — infrastructure, not branding. Renaming this breaks
+// every Open Finance call.
 const API_URL =
   'https://gfinance-production-d5a6.up.railway.app';
 

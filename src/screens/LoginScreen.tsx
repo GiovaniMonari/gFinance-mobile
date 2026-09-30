@@ -1,41 +1,56 @@
-import { useState } from 'react'
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Image
-} from 'react-native'
-import { Ionicons } from '@expo/vector-icons'
-import { NativeStackScreenProps } from '@react-navigation/native-stack'
-import logo from '../../assets/logogFinance.png'
-import { login } from '../api/authApi'
-import { RootStackParamList } from '../navigation/AppNavigator'
+/**
+ * Econva — Login
+ *
+ * The focused state of the journey. The artwork recedes to the top edge, the
+ * form takes the stage, and the composition is anchored: brand, heading,
+ * fields, action.
+ */
 
-type Props = NativeStackScreenProps<
-  RootStackParamList,
-  'Login'
->
+import { useState } from 'react';
+import { Animated, StyleSheet, Text, View } from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+
+import { login } from '../api/authApi';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import {
+  appColors,
+  appMotion,
+  appSpace,
+  appType,
+} from '../theme/app';
+import { showAlert } from '../components/app';
+import {
+  AuthButton,
+  AuthEyebrow,
+  AuthField,
+  AuthLink,
+  AuthLogo,
+  AuthScreen,
+  useEntrance,
+} from '../components/auth';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
 export function LoginScreen({ navigation }: Props) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const brandEntrance = useEntrance();
+  const headingEntrance = useEntrance({ delay: appMotion.stagger });
+  const formEntrance = useEntrance({ delay: appMotion.stagger * 2 });
+  const actionEntrance = useEntrance({ delay: appMotion.stagger * 3 });
 
   async function handleLogin() {
-    const cleanEmail = email.trim()
+    const cleanEmail = email.trim();
 
     if (!cleanEmail || !password) {
-      Alert.alert(
-        'Atenção',
-        'Preencha o e-mail e a senha.',
-      )
+      showAlert({
+        title: 'Atenção',
+        message: 'Preencha o e-mail e a senha.',
+        tone: 'warning',
+      })
       return
     }
 
@@ -46,426 +61,127 @@ export function LoginScreen({ navigation }: Props) {
 
       navigation.replace('Main')
     } catch (error) {
-      Alert.alert(
-        'Não foi possível entrar',
-        error instanceof Error
-          ? error.message
-          : 'Verifique suas credenciais e tente novamente.',
-      )
+      showAlert({
+        title: 'Não foi possível entrar',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Verifique suas credenciais e tente novamente.',
+        tone: 'danger',
+      })
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={
-        Platform.OS === 'ios'
-          ? 'padding'
-          : undefined
-      }
-    >
-      <ScrollView
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* HEADER */}
+    <AuthScreen variant="focused">
+      <Animated.View style={[styles.brand, brandEntrance]}>
+        <AuthLogo variant="mark" size={32} />
+        <AuthLogo
+          variant="wordmark"
+          width={98}
+          tint={appColors.textPrimary}
+        />
+      </Animated.View>
 
-        <View style={styles.header}>
-          <Image
-            source={logo}
-            style={styles.logo}
-            resizeMode="contain"
-          />
+      <View style={styles.spacer} />
 
-          <Text style={styles.subtitle}>
-            Sua vida financeira, mais inteligente.
-          </Text>
+      <Animated.View style={headingEntrance}>
+        <AuthEyebrow>Acesso</AuthEyebrow>
 
-          <View style={styles.headerAccent}>
-            <View style={styles.accentDot} />
-            <Text style={styles.accentText}>
-              gFinance V2
-            </Text>
-          </View>
-        </View>
+        <Text style={styles.title}>Bom te ver de volta.</Text>
 
-        {/* LOGIN CARD */}
+        <Text style={styles.subtitle}>
+          Entre para continuar de onde parou.
+        </Text>
+      </Animated.View>
 
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View>
-              <Text style={styles.cardTitle}>
-                Bem-vindo de volta
-              </Text>
+      <Animated.View style={[styles.form, formEntrance]}>
+        <AuthField
+          label="E-mail"
+          placeholder="seu@email.com"
+          icon="mail-outline"
+          keyboardType="email-address"
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={email}
+          onChangeText={setEmail}
+          editable={!loading}
+        />
 
-              <Text style={styles.cardSubtitle}>
-                Entre para continuar.
-              </Text>
-            </View>
+        <AuthField
+          label="Senha"
+          placeholder="Digite sua senha"
+          icon="lock-closed-outline"
+          secureTextEntry={!showPassword}
+          value={password}
+          onChangeText={setPassword}
+          editable={!loading}
+          trailingIcon={showPassword ? 'eye-off-outline' : 'eye-outline'}
+          onTrailingPress={() => setShowPassword((value) => !value)}
+          flush
+        />
+      </Animated.View>
 
-            <View style={styles.cardIcon}>
-              <Ionicons
-                name="arrow-forward"
-                size={18}
-                color="#2563eb"
-              />
-            </View>
-          </View>
+      <View style={styles.actionSpacer} />
 
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                E-mail
-              </Text>
+      <Animated.View style={actionEntrance}>
+        <AuthButton
+          title="Entrar"
+          loadingTitle="Entrando..."
+          loading={loading}
+          onPress={handleLogin}
+        />
 
-              <View style={styles.inputContainer}>
-                <Ionicons
-                  name="mail-outline"
-                  size={19}
-                  color="#98a2b3"
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="seu@email.com"
-                  placeholderTextColor="#98a2b3"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  value={email}
-                  onChangeText={setEmail}
-                  editable={!loading}
-                />
-              </View>
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>
-                Senha
-              </Text>
-
-              <View style={styles.inputContainer}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={19}
-                  color="#98a2b3"
-                />
-
-                <TextInput
-                  style={styles.input}
-                  placeholder="Digite sua senha"
-                  placeholderTextColor="#98a2b3"
-                  secureTextEntry={!showPassword}
-                  value={password}
-                  onChangeText={setPassword}
-                  editable={!loading}
-                />
-
-                <TouchableOpacity
-                  onPress={() =>
-                    setShowPassword((value) => !value)
-                  }
-                  disabled={loading}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons
-                    name={
-                      showPassword
-                        ? 'eye-off-outline'
-                        : 'eye-outline'
-                    }
-                    size={19}
-                    color="#98a2b3"
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <TouchableOpacity
-              style={[
-                styles.button,
-                loading && styles.buttonDisabled,
-              ]}
-              onPress={handleLogin}
-              disabled={loading}
-              activeOpacity={0.85}
-            >
-              {loading ? (
-                <Text style={styles.buttonText}>
-                  Entrando...
-                </Text>
-              ) : (
-                <>
-                  <Text style={styles.buttonText}>
-                    Entrar
-                  </Text>
-
-                  <Ionicons
-                    name="arrow-forward"
-                    size={18}
-                    color="#ffffff"
-                  />
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* FOOTER */}
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Ainda não possui uma conta?
-          </Text>
-
-          <TouchableOpacity
-            onPress={() => {
-              navigation.navigate('Register')
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.registerText}>
-              Cadastre-se
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  )
+        <AuthLink
+          label="Ainda não tem conta?"
+          action="Criar conta"
+          onPress={() => {
+            navigation.navigate('Register')
+          }}
+          style={styles.link}
+        />
+      </Animated.View>
+    </AuthScreen>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f6f8fb',
-  },
-
-  content: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
-    paddingTop: 44,
-    paddingBottom: 34,
-  },
-
-  /* HEADER */
-
-  header: {
+  brand: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 30,
+    gap: appSpace.md,
   },
 
- logo: {
-    width: 300,
-    height: 120,
-    alignSelf: 'center',
+  spacer: {
+    flex: 1,
+    minHeight: appSpace.xxl,
+  },
+
+  /** Keeps the action closer to the form than to the heading. */
+  actionSpacer: {
+    flex: 0.6,
+    minHeight: appSpace.lg,
   },
 
   title: {
-    fontSize: 31,
-    lineHeight: 37,
-    fontWeight: '800',
-    letterSpacing: -0.8,
-    color: '#101828',
+    ...appType.screenTitle,
+    color: appColors.textPrimary,
+    marginTop: appSpace.md,
   },
 
   subtitle: {
-    marginTop: 8,
-
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: '400',
-
-    color: '#667085',
-    textAlign: 'center',
+    ...appType.bodySmall,
+    color: appColors.textSecondary,
+    marginTop: appSpace.sm,
   },
-
-  headerAccent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-
-    marginTop: 14,
-  },
-
-  accentDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#2563eb',
-  },
-
-  accentText: {
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '700',
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-    color: '#2563eb',
-  },
-
-  /* CARD */
-
-  card: {
-    width: '100%',
-    padding: 24,
-
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-
-    borderWidth: 1,
-    borderColor: '#eaecf0',
-
-    shadowColor: '#101828',
-    shadowOffset: {
-      width: 0,
-      height: 12,
-    },
-    shadowOpacity: 0.06,
-    shadowRadius: 24,
-    elevation: 4,
-  },
-
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-
-    marginBottom: 26,
-  },
-
-  cardTitle: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '700',
-    letterSpacing: -0.45,
-    color: '#101828',
-  },
-
-  cardSubtitle: {
-    marginTop: 5,
-
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#667085',
-  },
-
-  cardIcon: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-
-    borderRadius: 11,
-    backgroundColor: '#eff6ff',
-  },
-
-  /* FORM */
 
   form: {
-    width: '100%',
+    marginTop: appSpace.xxxl,
   },
 
-  inputGroup: {
-    marginBottom: 18,
+  link: {
+    marginTop: appSpace.md,
   },
-
-  label: {
-    marginBottom: 8,
-
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-
-    color: '#344054',
-  },
-
-  inputContainer: {
-    height: 52,
-
-    flexDirection: 'row',
-    alignItems: 'center',
-
-    paddingHorizontal: 14,
-
-    borderRadius: 12,
-    backgroundColor: '#ffffff',
-
-    borderWidth: 1,
-    borderColor: '#d0d5dd',
-  },
-
-  input: {
-    flex: 1,
-    minWidth: 0,
-
-    height: '100%',
-    marginLeft: 10,
-
-    paddingVertical: 0,
-
-    fontSize: 15,
-    color: '#101828',
-  },
-
-  button: {
-    height: 52,
-
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-
-    gap: 9,
-    marginTop: 6,
-
-    borderRadius: 12,
-    backgroundColor: '#2563eb',
-
-    shadowColor: '#2563eb',
-    shadowOffset: {
-      width: 0,
-      height: 6,
-    },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-
-  buttonText: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-
-  /* FOOTER */
-
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-
-    gap: 4,
-    marginTop: 24,
-  },
-
-  footerText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: '#667085',
-  },
-
-  registerText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '700',
-    color: '#2563eb',
-  },
-})
+});

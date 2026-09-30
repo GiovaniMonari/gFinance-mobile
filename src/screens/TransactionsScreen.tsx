@@ -1,944 +1,375 @@
-import { useCallback, useState } from 'react'
+/**
+ * Econva — Transactions
+ *
+ * A data-heavy screen translated into the product's language: one list, hairline
+ * separated, with the amount carrying the eye and semantic colour used only for
+ * direction. Nothing floats — the list is a single surface on the canvas.
+ *
+ * Data, source resolution and navigation are unchanged.
+ */
+
+import { useCallback, useState } from 'react';
+import { Animated, FlatList, StyleSheet, View } from 'react-native';
+import Reanimated, { FadeIn, LinearTransition } from 'react-native-reanimated';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { AppLoading } from '../components/AppLoading';
+import { getTransactions as getLocalTransactions } from '../api/transactionApi';
+import type { Transaction } from '../types/transaction';
+import { formatCurrency } from '../utils/formatCurrency';
 import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  ActivityIndicator,
-  TouchableOpacity,
-} from 'react-native'
-import { useFocusEffect, useNavigation } from '@react-navigation/native'
-import { Ionicons } from '@expo/vector-icons'
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack'
-import { AppLoading } from '../components/AppLoading'
-import {
-  getTransactions as getLocalTransactions,
-} from '../api/transactionApi'
-
-import type { Transaction } from '../types/transaction'
-
-import { formatCurrency } from '../utils/formatCurrency'
-import { formatTransactionStatus } from '../utils/transaction'
-
+  formatTransactionStatus,
+  translateCategory,
+} from '../utils/transaction';
 import {
   getConnections,
   getAccounts,
   getTransactions as getOpenFinanceTransactions,
-} from '../services/openFinanceService'
+} from '../services/openFinanceService';
+import { getAccessToken } from '../api/authApi';
+import { navigationRef } from '../navigation/navigationRef';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import { appColors, appLayout, appMotion, appSpace } from '../theme/app';
+import { Button, useEntrance } from '../components/ui';
+import {
+  AppRefreshControl,
+  AppText,
+  EmptyState,
+  ListRow,
+  Screen,
+  Section,
+  Surface,
+} from '../components/app';
 
-import { getAccessToken } from '../api/authApi'
+/*
+ * Layout animation definitions live at module scope, not inline in JSX.
+ * `FadeIn.duration(...)` builds a new object every time it is called, and an
+ * `entering` prop that changes identity re-triggers the entrance — so a screen
+ * that merely re-renders would replay its fade from zero opacity and look like
+ * it had blanked. Stable references, stable behaviour.
+ */
+const ROW_LAYOUT = LinearTransition.duration(appMotion.layout);
 
-import { navigationRef } from '../navigation/navigationRef'
-import type { RootStackParamList } from '../navigation/AppNavigator'
+/** Pre-built staggered entrances, so a row's animation never changes identity. */
+const ROW_ENTER = Array.from({ length: 9 }, (_, i) =>
+  FadeIn.duration(appMotion.layout).delay(i * appMotion.stagger),
+);
 
-type NavigationProp =
-  NativeStackNavigationProp<RootStackParamList>
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 type OpenFinanceTransaction = {
-  id: string
-  description: string
-  amount: number
-  date: string
-  category: string | null
-  type: 'DEBIT' | 'CREDIT'
-  status: string
-}
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  category: string | null;
+  type: 'DEBIT' | 'CREDIT';
+  status: string;
+};
 
 type DashboardTransaction = {
-  id: string
-  description: string
-  amount: number
-  date: string
-  category: string | null
-  type: 'EXPENSE' | 'INCOME'
-  status: string
-  source: 'OPEN_FINANCE' | 'LOCAL'
-  localTransaction?: Transaction
-}
+  id: string;
+  description: string;
+  amount: number;
+  date: string;
+  category: string | null;
+  type: 'EXPENSE' | 'INCOME';
+  status: string;
+  source: 'OPEN_FINANCE' | 'LOCAL';
+  localTransaction?: Transaction;
+};
 
 export function TransactionsScreen() {
-  const [transactions, setTransactions] =
-    useState<DashboardTransaction[]>([])
+  const [transactions, setTransactions] = useState<DashboardTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [openFinanceConnected, setOpenFinanceConnected] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const navigation = useNavigation<NavigationProp>();
 
-  const [loading, setLoading] = useState(true)
+  const loadTransactions = useCallback(async () => {
+    try {
+      setLoading(true);
+      const accessToken = await getAccessToken();
 
-  const [openFinanceConnected, setOpenFinanceConnected] =
-    useState(false)
-
-  const navigation =
-    useNavigation<NavigationProp>()
-
-  const loadTransactions = useCallback(
-    async () => {
-      try {
-        setLoading(true)
-
-        const accessToken =
-          await getAccessToken()
-
-        if (!accessToken) {
-          const localTransactions =
-            await getLocalTransactions()
-
-          setOpenFinanceConnected(false)
-
-          setTransactions(
-            localTransactions.map(
-              (transaction) => ({
-                id: transaction.id,
-                description:
-                  transaction.description,
-                amount: Number(
-                  transaction.amount,
-                ),
-                date: transaction.createdAt,
-                category: null,
-                type:
-                  transaction.type ===
-                  'EXPENSE'
-                    ? 'EXPENSE'
-                    : 'INCOME',
-                status: transaction.status,
-                source: 'LOCAL',
-                localTransaction:
-                  transaction,
-              }),
-            ),
-          )
-
-          return
-        }
-
-        const connectionsResponse =
-          await getConnections(accessToken)
-
-        const connection =
-          (
-            connectionsResponse.connections ??
-            []
-          ).find(
-            (item: { status: string }) =>
-              item.status === 'connected',
-          )
-
-        if (!connection) {
-          const localTransactions =
-            await getLocalTransactions()
-
-          setOpenFinanceConnected(false)
-
-          setTransactions(
-            localTransactions.map(
-              (transaction) => ({
-                id: transaction.id,
-                description:
-                  transaction.description,
-                amount: Number(
-                  transaction.amount,
-                ),
-                date: transaction.createdAt,
-                category: null,
-                type:
-                  transaction.type ===
-                  'EXPENSE'
-                    ? 'EXPENSE'
-                    : 'INCOME',
-                status: transaction.status,
-                source: 'LOCAL',
-                localTransaction:
-                  transaction,
-              }),
-            ),
-          )
-
-          return
-        }
-
-        setOpenFinanceConnected(true)
-
-        const accountsResponse =
-          await getAccounts(
-            accessToken,
-            connection.id,
-          )
-
-        const account =
-          accountsResponse.accounts?.[0]
-
-        if (!account) {
-          setTransactions([])
-          return
-        }
-
-        const bankTransactions =
-          await getOpenFinanceTransactions(
-            accessToken,
-            connection.id,
-            account.id,
-          )
-
-        console.log(
-          'OPEN FINANCE TRANSACTIONS:',
-          JSON.stringify(
-            bankTransactions,
-            null,
-            2,
-          ),
-        )
-
-        const formattedTransactions: DashboardTransaction[] =
-          (
-            bankTransactions.transactions ??
-            bankTransactions ??
-            []
-          ).map(
-            (
-              transaction: OpenFinanceTransaction,
-            ) => ({
-              id: transaction.id,
-              description:
-                transaction.description,
-              amount: Number(
-                transaction.amount,
-              ),
-              date: transaction.date,
-              category:
-                transaction.category,
-              type:
-                transaction.type === 'DEBIT'
-                  ? 'EXPENSE'
-                  : 'INCOME',
-              status: transaction.status,
-              source: 'OPEN_FINANCE',
-            }),
-          )
-
+      if (!accessToken) {
+        const localTransactions = await getLocalTransactions();
+        setOpenFinanceConnected(false);
         setTransactions(
-          formattedTransactions,
-        )
-      } catch (error) {
-        console.error(
-          'Erro ao buscar transações:',
-          error,
-        )
-      } finally {
-        setLoading(false)
+          localTransactions.map((t) => ({
+            id: t.id,
+            description: t.description,
+            amount: Number(t.amount),
+            date: t.createdAt,
+            category: null,
+            type: t.type === 'EXPENSE' ? 'EXPENSE' : 'INCOME',
+            status: t.status,
+            source: 'LOCAL' as const,
+            localTransaction: t,
+          })),
+        );
+        return;
       }
-    },
-    [],
-  )
+
+      const connectionsResponse = await getConnections(accessToken);
+      const connection = (connectionsResponse.connections ?? []).find(
+        (item: { status: string }) => item.status === 'connected',
+      );
+
+      if (!connection) {
+        const localTransactions = await getLocalTransactions();
+        setOpenFinanceConnected(false);
+        setTransactions(
+          localTransactions.map((t) => ({
+            id: t.id,
+            description: t.description,
+            amount: Number(t.amount),
+            date: t.createdAt,
+            category: null,
+            type: t.type === 'EXPENSE' ? 'EXPENSE' : 'INCOME',
+            status: t.status,
+            source: 'LOCAL' as const,
+            localTransaction: t,
+          })),
+        );
+        return;
+      }
+
+      setOpenFinanceConnected(true);
+      const accountsResponse = await getAccounts(accessToken, connection.id);
+      const account = accountsResponse.accounts?.[0];
+
+      if (!account) {
+        setTransactions([]);
+        return;
+      }
+
+      const bankTransactions = await getOpenFinanceTransactions(
+        accessToken,
+        connection.id,
+        account.id,
+      );
+
+      const formattedTransactions: DashboardTransaction[] = (
+        bankTransactions.transactions ?? bankTransactions ?? []
+      ).map((t: OpenFinanceTransaction) => ({
+        id: t.id,
+        description: t.description,
+        amount: Number(t.amount),
+        date: t.date,
+        category: translateCategory(t.category),
+        type: t.type === 'DEBIT' ? 'EXPENSE' : 'INCOME',
+        status: t.status,
+        source: 'OPEN_FINANCE' as const,
+      }));
+
+      setTransactions(formattedTransactions);
+    } catch (error) {
+      console.error('Erro ao buscar transações:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      loadTransactions()
+      loadTransactions();
     }, [loadTransactions]),
-  )
+  );
+
+  /** Pull to refresh re-reads the same source, without unmounting the list. */
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await loadTransactions();
+    setRefreshing(false);
+  }, [loadTransactions]);
+
+  const headerEntrance = useEntrance({ start: !loading });
 
   if (loading) {
-    return (
-      <AppLoading
-        message="Carregando transações"
-        description="Sincronizando suas movimentações"
-      />
-    )
+    return <AppLoading message="Carregando transações" description="Sincronizando suas movimentações" />;
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerText}>
-          <Text style={styles.eyebrow}>
-            Controle financeiro
-          </Text>
-
-          <Text style={styles.title}>
-            Transações
-          </Text>
-
-          <Text style={styles.subtitle}>
-            {openFinanceConnected
-              ? 'Movimentações sincronizadas automaticamente'
-              : 'Acompanhe suas movimentações financeiras'}
-          </Text>
-        </View>
-
-        <View style={styles.headerIcon}>
-          <Ionicons
-            name="swap-horizontal"
-            size={21}
-            color="#2563eb"
-          />
-        </View>
-      </View>
-
-      {/* Connection status */}
-      {openFinanceConnected && (
-        <View style={styles.connectionCard}>
-          <View style={styles.connectionIcon}>
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={18}
-              color="#16803c"
-            />
-          </View>
-
-          <View style={styles.connectionInfo}>
-            <Text style={styles.connectionTitle}>
-              Banco conectado
-            </Text>
-
-            <Text style={styles.connectionSubtitle}>
-              Dados sincronizados via Open Finance
-            </Text>
-          </View>
-
-          <View style={styles.connectionDot} />
-        </View>
-      )}
-
-      {/* Local transaction action */}
-      {!openFinanceConnected && (
-        <TouchableOpacity
-          style={styles.addButton}
-          onPress={() =>
-            navigation.navigate(
-              'CreateTransaction',
-            )
-          }
-          activeOpacity={0.82}
-        >
-          <View style={styles.addIcon}>
-            <Ionicons
-              name="add"
-              size={20}
-              color="#ffffff"
-            />
-          </View>
-
-          <View style={styles.addTextContainer}>
-            <Text style={styles.addTitle}>
-              Nova transação
-            </Text>
-
-            <Text style={styles.addSubtitle}>
-              Registre uma nova movimentação
-            </Text>
-          </View>
-
-          <Ionicons
-            name="arrow-forward"
-            size={18}
-            color="#ffffff"
-          />
-        </TouchableOpacity>
-      )}
-
-      {/* Section header */}
-      <View style={styles.sectionHeader}>
-        <View>
-          <Text style={styles.sectionTitle}>
-            Movimentações
-          </Text>
-
-          <Text style={styles.sectionSubtitle}>
-            {transactions.length === 0
-              ? 'Nenhuma movimentação encontrada'
-              : `${transactions.length} ${
-                  transactions.length === 1
-                    ? 'movimentação'
-                    : 'movimentações'
-                }`}
-          </Text>
-        </View>
-
-        {transactions.length > 0 && (
-          <View style={styles.countBadge}>
-            <Text style={styles.countText}>
-              {transactions.length}
-            </Text>
-          </View>
-        )}
-      </View>
-
+    <Screen tabBar>
       <FlatList
         data={transactions}
-        keyExtractor={(item) =>
-          `${item.source}-${item.id}`
-        }
-        contentContainerStyle={[
-          styles.list,
-          transactions.length === 0 &&
-            styles.emptyList,
-        ]}
+        keyExtractor={(item) => `${item.source}-${item.id}`}
+        style={styles.flex}
+        contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
-        renderItem={({ item }) => {
-          const isExpense =
-            item.type === 'EXPENSE'
+        initialNumToRender={12}
+        windowSize={11}
+        removeClippedSubviews
+        refreshControl={
+          onRefresh ? (
+            <AppRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          ) : undefined
+        }
+        ListHeaderComponent={
+          <Animated.View style={headerEntrance}>
+            <AppText variant="micro" tone="tertiary">
+              CONTROLE FINANCEIRO
+            </AppText>
+            <AppText variant="screenTitle" tone="primary" style={styles.title}>
+              Transações
+            </AppText>
+            <AppText variant="bodySmall" tone="secondary" style={styles.subtitle}>
+              {openFinanceConnected
+                ? 'Movimentações sincronizadas automaticamente'
+                : 'Acompanhe suas movimentações financeiras'}
+            </AppText>
+
+            {openFinanceConnected ? (
+              <Surface variant="plain" radius="group" padding="md" style={styles.connection}>
+                <View style={styles.connectionRow}>
+                  <Ionicons
+                    name="shield-checkmark"
+                    size={16}
+                    color={appColors.income}
+                  />
+                  <View style={styles.connectionText}>
+                    <AppText variant="captionStrong" tone="primary">
+                      Banco conectado
+                    </AppText>
+                    <AppText variant="meta" tone="tertiary">
+                      Dados sincronizados via Open Finance
+                    </AppText>
+                  </View>
+                  <View style={styles.connectionDot} />
+                </View>
+              </Surface>
+            ) : (
+              <Button
+                title="Nova transação"
+                onPress={() => navigation.navigate('CreateTransaction')}
+                size="md"
+                icon="add"
+                fullWidth
+                style={styles.addButton}
+              />
+            )}
+
+            <Section
+              title="Movimentações"
+              description={
+                transactions.length === 0
+                  ? 'Nenhuma movimentação encontrada'
+                  : `${transactions.length} ${transactions.length === 1 ? 'movimentação' : 'movimentações'}`
+              }
+              style={styles.section}
+            />
+          </Animated.View>
+        }
+        ListEmptyComponent={
+          <EmptyState
+            icon={openFinanceConnected ? 'card-outline' : 'receipt-outline'}
+            title={
+              openFinanceConnected ? 'Nenhuma movimentação' : 'Nenhuma transação'
+            }
+            description={
+              openFinanceConnected
+                ? 'Não encontramos transações na conta conectada.'
+                : 'Suas transações aparecerão aqui assim que forem registradas.'
+            }
+            actionLabel={!openFinanceConnected ? 'Criar transação' : undefined}
+            onActionPress={
+              !openFinanceConnected
+                ? () => navigation.navigate('CreateTransaction')
+                : undefined
+            }
+          />
+        }
+        renderItem={({ item, index }) => {
+          const isExpense = item.type === 'EXPENSE';
 
           return (
-            <TouchableOpacity
-              style={styles.transactionCard}
-              activeOpacity={0.78}
-              onPress={() => {
-                if (item.source === 'LOCAL') {
-                  navigationRef.navigate(
-                    'TransactionDetails',
-                    {
+            <Reanimated.View
+              entering={ROW_ENTER[Math.min(index, 8)]}
+              layout={ROW_LAYOUT}
+            >
+              <ListRow
+                divider={index > 0}
+                title={item.description}
+                meta={formatTransactionStatus(item.status)}
+                amount={`${isExpense ? '-' : '+'}${formatCurrency(item.amount)}`}
+                amountTone={isExpense ? 'negative' : 'positive'}
+                icon={isExpense ? 'arrow-up' : 'arrow-down'}
+                iconTone={isExpense ? 'negative' : 'positive'}
+                showChevron
+                onPress={() => {
+                  if (item.source === 'LOCAL') {
+                    navigationRef.navigate('TransactionDetails', {
                       transactionId: item.id,
                       source: 'LOCAL',
-                    },
-                  )
-                }
-
-                if (
-                  item.source ===
-                  'OPEN_FINANCE'
-                ) {
-                  navigationRef.navigate(
-                    'TransactionDetails',
-                    {
+                    });
+                  }
+                  if (item.source === 'OPEN_FINANCE') {
+                    navigationRef.navigate('TransactionDetails', {
                       transactionId: item.id,
                       source: 'OPEN_FINANCE',
-                    },
-                  )
-                }
-              }}
-            >
-              {/* Transaction icon */}
-              <View
-                style={[
-                  styles.transactionIcon,
-                  isExpense
-                    ? styles.expenseIcon
-                    : styles.incomeIcon,
-                ]}
-              >
-                <Ionicons
-                  name={
-                    isExpense
-                      ? 'arrow-down'
-                      : 'arrow-up'
+                    });
                   }
-                  size={18}
-                  color={
-                    isExpense
-                      ? '#dc2626'
-                      : '#16803c'
-                  }
-                />
-              </View>
-
-              {/* Information */}
-              <View
-                style={styles.transactionInfo}
-              >
-                <Text
-                  style={styles.description}
-                  numberOfLines={1}
-                  ellipsizeMode="tail"
-                >
-                  {item.description}
-                </Text>
-
-                <View
-                  style={styles.metaRow}
-                >
-                  {item.category && (
-                    <View
-                      style={styles.categoryTag}
-                    >
-                      <Ionicons
-                        name="pricetag-outline"
-                        size={10}
-                        color="#667085"
-                      />
-
-                      <Text
-                        style={styles.category}
-                        numberOfLines={1}
-                      >
-                        {item.category}
-                      </Text>
-                    </View>
-                  )}
-
-                  <View
-                    style={styles.statusTag}
-                  >
-                    <Text
-                      style={styles.status}
-                      numberOfLines={1}
-                    >
-                      {formatTransactionStatus(
-                        item.status,
-                      )}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              {/* Amount */}
-              <View
-                style={styles.amountContainer}
-              >
-                <Text
-                  style={[
-                    styles.amount,
-                    isExpense
-                      ? styles.expense
-                      : styles.income,
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.72}
-                >
-                  {isExpense
-                    ? formatCurrency(
-                        -Math.abs(
-                          item.amount,
-                        ),
-                      )
-                    : `+${formatCurrency(
-                        Math.abs(
-                          item.amount,
-                        ),
-                      )}`}
-                </Text>
-
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color="#c4c9d1"
-                />
-              </View>
-            </TouchableOpacity>
-          )
-        }}
-        ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIcon}>
-              <Ionicons
-                name={
-                  openFinanceConnected
-                    ? 'card-outline'
-                    : 'receipt-outline'
-                }
-                size={28}
-                color="#98a2b3"
+                }}
               />
-            </View>
-
-            <Text style={styles.emptyTitle}>
-              {openFinanceConnected
-                ? 'Nenhuma movimentação'
-                : 'Nenhuma transação'}
-            </Text>
-
-            <Text
-              style={styles.emptyDescription}
-            >
-              {openFinanceConnected
-                ? 'Não encontramos transações na conta conectada.'
-                : 'Suas transações aparecerão aqui assim que forem registradas.'}
-            </Text>
-
-            {!openFinanceConnected && (
-              <TouchableOpacity
-                style={styles.emptyButton}
-                onPress={() =>
-                  navigation.navigate(
-                    'CreateTransaction',
-                  )
-                }
-                activeOpacity={0.8}
-              >
-                <Text
-                  style={styles.emptyButtonText}
-                >
-                  Criar transação
-                </Text>
-
-                <Ionicons
-                  name="arrow-forward"
-                  size={16}
-                  color="#2563eb"
-                />
-              </TouchableOpacity>
-            )}
-          </View>
-        }
+            </Reanimated.View>
+          );
+        }}
       />
-    </View>
-  )
+    </Screen>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  flex: {
     flex: 1,
-    backgroundColor: '#f5f7fb',
-    paddingHorizontal: 20,
-    paddingTop: 58,
   },
 
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f7fb',
-  },
-
-  /* Header */
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-
-  headerText: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: 16,
-  },
-
-  eyebrow: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#667085',
-    marginBottom: 3,
+  list: {
+    flexGrow: 1,
+    paddingTop: appLayout.screenTop,
+    paddingHorizontal: appLayout.gutter,
   },
 
   title: {
-    fontSize: 30,
-    lineHeight: 36,
-    fontWeight: '800',
-    letterSpacing: -0.7,
-    color: '#101828',
+    marginTop: appSpace.xs,
+    marginBottom: appSpace.xs,
   },
 
   subtitle: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#98a2b3',
+    marginBottom: appSpace.xl,
   },
 
-  headerIcon: {
-    width: 46,
-    height: 46,
-    borderRadius: 15,
-    backgroundColor: '#eaf2ff',
-    alignItems: 'center',
-    justifyContent: 'center',
+  connection: {
+    borderBottomWidth: 1,
+    borderBottomColor: appColors.border,
+    borderRadius: 0,
+    paddingHorizontal: 0,
+    marginBottom: appSpace.xl,
   },
 
-  /* Connection */
-
-  connectionCard: {
-    minHeight: 62,
+  connectionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 14,
-    borderRadius: 17,
-    backgroundColor: '#ffffff',
-    borderWidth: 1,
-    borderColor: '#e6f2ea',
+    gap: appSpace.md,
   },
 
-  connectionIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
-    backgroundColor: '#eaf7ef',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 11,
-  },
-
-  connectionInfo: {
+  connectionText: {
     flex: 1,
-    minWidth: 0,
-  },
-
-  connectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#101828',
-  },
-
-  connectionSubtitle: {
-    marginTop: 2,
-    fontSize: 11,
-    color: '#98a2b3',
   },
 
   connectionDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#16a34a',
-    marginLeft: 8,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: appColors.income,
   },
-
-  /* Add button */
 
   addButton: {
-    minHeight: 64,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 13,
-    paddingVertical: 10,
-    marginBottom: 22,
-    borderRadius: 18,
-    backgroundColor: '#101828',
+    marginBottom: appSpace.xl,
   },
 
-  addIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 13,
-    backgroundColor: '#2563eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 11,
+  section: {
+    marginBottom: appSpace.sm,
   },
-
-  addTextContainer: {
-    flex: 1,
-    minWidth: 0,
-  },
-
-  addTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-
-  addSubtitle: {
-    marginTop: 2,
-    fontSize: 11,
-    color: '#98a2b3',
-  },
-
-  /* Section */
-
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 11,
-  },
-
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#101828',
-  },
-
-  sectionSubtitle: {
-    marginTop: 3,
-    fontSize: 11,
-    color: '#98a2b3',
-  },
-
-  countBadge: {
-    minWidth: 30,
-    height: 30,
-    paddingHorizontal: 8,
-    borderRadius: 10,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#edf0f4',
-  },
-
-  countText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#667085',
-  },
-
-  /* Transactions */
-
-  list: {
-    paddingTop: 2,
-    paddingBottom: 110,
-  },
-
-  emptyList: {
-    flexGrow: 1,
-    paddingBottom: 110,
-  },
-
-  transactionCard: {
-    minHeight: 76,
-    flexDirection: 'row',
-    alignItems: 'center',
-
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-
-    marginBottom: 9,
-
-    borderRadius: 18,
-    backgroundColor: '#ffffff',
-
-    borderWidth: 1,
-    borderColor: '#edf0f4',
-  },
-
-  transactionIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-
-    alignItems: 'center',
-    justifyContent: 'center',
-
-    marginRight: 11,
-  },
-
-  expenseIcon: {
-    backgroundColor: '#fff0f0',
-  },
-
-  incomeIcon: {
-    backgroundColor: '#eaf7ef',
-  },
-
-  transactionInfo: {
-    flex: 1,
-    minWidth: 0,
-    marginRight: 8,
-  },
-
-  description: {
-    fontSize: 13.5,
-    lineHeight: 18,
-    fontWeight: '700',
-    color: '#101828',
-    flexShrink: 1,
-  },
-
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    minWidth: 0,
-    marginTop: 6,
-    gap: 5,
-  },
-
-  categoryTag: {
-    maxWidth: 105,
-    minWidth: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 7,
-    backgroundColor: '#f5f7fa',
-  },
-
-  category: {
-    maxWidth: 86,
-    fontSize: 10,
-    color: '#667085',
-    flexShrink: 1,
-  },
-
-  statusTag: {
-    maxWidth: 82,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 7,
-    backgroundColor: '#f5f7fa',
-  },
-
-  status: {
-    fontSize: 10,
-    color: '#98a2b3',
-    flexShrink: 1,
-  },
-
-  amountContainer: {
-    width: 108,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 3,
-  },
-
-  amount: {
-    flexShrink: 1,
-    fontSize: 12.5,
-    fontWeight: '800',
-    textAlign: 'right',
-  },
-
-  expense: {
-    color: '#dc2626',
-  },
-
-  income: {
-    color: '#16803c',
-  },
-
-  /* Empty */
-
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-    paddingBottom: 35,
-  },
-
-  emptyIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: '#ffffff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#edf0f4',
-  },
-
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#101828',
-  },
-
-  emptyDescription: {
-    marginTop: 6,
-    fontSize: 12,
-    lineHeight: 18,
-    color: '#98a2b3',
-    textAlign: 'center',
-  },
-
-  emptyButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 7,
-    marginTop: 18,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#eaf2ff',
-  },
-
-  emptyButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#2563eb',
-  },
-})
+});
