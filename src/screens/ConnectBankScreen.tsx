@@ -570,6 +570,7 @@ export function ConnectBankScreen() {
             <TrustNote
               title="Seus dados estão protegidos"
               description="Sua conexão é realizada de forma segura através do Open Finance."
+              onPressPrivacy={() => navigation.navigate('LegalDocument', { key: 'privacy' })}
             />
           </Animated.View>
         </Reanimated.View>
@@ -644,6 +645,7 @@ export function ConnectBankScreen() {
             <TrustNote
               title="Conexão segura"
               description="O acesso é realizado através do Open Finance. Você não precisa compartilhar sua senha bancária com o Econva."
+              onPressPrivacy={() => navigation.navigate('LegalDocument', { key: 'privacy' })}
             />
           </Animated.View>
         </Reanimated.View>
@@ -655,9 +657,11 @@ export function ConnectBankScreen() {
 function TrustNote({
   title,
   description,
+  onPressPrivacy,
 }: {
   title: string;
   description: string;
+  onPressPrivacy?: () => void;
 }) {
   return (
     <View style={styles.trust}>
@@ -670,7 +674,17 @@ function TrustNote({
             {title}
           </AppText>
           <AppText variant="caption" tone="secondary">
-            {description}
+            {description}{' '}
+            {onPressPrivacy ? (
+              <AppText
+                variant="caption"
+                tone="primary"
+                style={{ textDecorationLine: 'underline', color: appColors.accentBright }}
+                onPress={onPressPrivacy}
+              >
+                Leia nossa Política de Privacidade.
+              </AppText>
+            ) : null}
           </AppText>
         </View>
       </View>

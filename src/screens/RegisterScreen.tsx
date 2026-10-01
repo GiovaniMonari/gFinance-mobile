@@ -11,6 +11,7 @@ import { Animated, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { register } from '../api/authApi';
+import { getCurrentVersion, recordAcceptance } from '../legal';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import {
   appColors,
@@ -81,7 +82,19 @@ export function RegisterScreen({ navigation }: Props) {
     try {
       setLoading(true)
 
-      await register(cleanEmail, password)
+      await register(cleanEmail, password);
+
+      const termsVer = getCurrentVersion('terms')?.version ?? '1.0';
+      const privacyVer = getCurrentVersion('privacy')?.version ?? '1.0';
+      try {
+        await recordAcceptance({
+          userId: cleanEmail,
+          termsVersion: termsVer,
+          privacyVersion: privacyVer,
+        });
+      } catch (acceptanceErr) {
+        console.warn('Não foi possível gravar aceite legal localmente:', acceptanceErr);
+      }
 
       showAlert({
         title: 'Conta criada',
@@ -182,6 +195,26 @@ export function RegisterScreen({ navigation }: Props) {
       <View style={styles.actionSpacer} />
 
       <Animated.View style={actionEntrance}>
+        <View style={styles.legalNotice}>
+          <Text style={styles.legalNoticeText}>
+            Ao criar sua conta, você concorda com nossos{' '}
+            <Text
+              style={styles.legalNoticeLink}
+              onPress={() => navigation.navigate('LegalDocument', { key: 'terms' })}
+            >
+              Termos de Uso
+            </Text>
+            {' '}e{' '}
+            <Text
+              style={styles.legalNoticeLink}
+              onPress={() => navigation.navigate('LegalDocument', { key: 'privacy' })}
+            >
+              Política de Privacidade
+            </Text>
+            .
+          </Text>
+        </View>
+
         <AuthButton
           title="Criar conta"
           loadingTitle="Criando conta..."
@@ -236,5 +269,23 @@ const styles = StyleSheet.create({
 
   link: {
     marginTop: appSpace.md,
+  },
+
+  legalNotice: {
+    marginBottom: appSpace.md,
+    paddingHorizontal: appSpace.xs,
+  },
+
+  legalNoticeText: {
+    ...appType.caption,
+    color: appColors.textTertiary,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+
+  legalNoticeLink: {
+    color: appColors.accentBright,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });

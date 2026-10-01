@@ -35,6 +35,11 @@ import { AppLoading } from '../components/AppLoading';
 import { appColors, appRadius, appSpace, appMotion } from '../theme/app';
 import { Logo, useEntrance } from '../components/ui';
 import {
+  getCurrentVersionLabel,
+  getAcceptanceStatus,
+  type LegalAcceptanceStatus,
+} from '../legal';
+import {
   AppText,
   ListRow,
   ScrollScreen,
@@ -68,6 +73,7 @@ export function ProfileScreen() {
    * may happen next.
    */
   const [bankAvailable, setBankAvailable] = useState<boolean | null>(null);
+  const [legalStatus, setLegalStatus] = useState<LegalAcceptanceStatus | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -77,7 +83,12 @@ export function ProfileScreen() {
     setProfileError(false);
 
     try {
-      setProfile(await getProfile());
+      const data = await getProfile();
+      setProfile(data);
+      if (data?.email) {
+        const status = await getAcceptanceStatus(data.email);
+        setLegalStatus(status);
+      }
     } catch (error) {
       console.error('ERRO AO CARREGAR PERFIL:', error);
 
@@ -446,6 +457,47 @@ export function ProfileScreen() {
               onPress={confirmDisconnect}
             />
           ) : null}
+        </Section>
+      </Animated.View>
+
+      {/* Legal & Compliance */}
+      <Animated.View style={[securityEntrance, styles.block]}>
+        <Section title="Documentos Legais" eyebrow="Termos & LGPD">
+          <ListRow
+            title="Termos de Uso"
+            meta={
+              legalStatus?.documents.terms.acceptedVersion
+                ? `Versão ${legalStatus.documents.terms.acceptedVersion} • Aceito`
+                : `Versão ${getCurrentVersionLabel('terms')}`
+            }
+            icon="document-text-outline"
+            iconTone="accent"
+            showChevron
+            onPress={() =>
+              navigation.navigate('LegalDocument', {
+                key: 'terms',
+                userId: profile?.email,
+              })
+            }
+          />
+          <ListRow
+            title="Política de Privacidade"
+            meta={
+              legalStatus?.documents.privacy.acceptedVersion
+                ? `Versão ${legalStatus.documents.privacy.acceptedVersion} • Aceita`
+                : `Versão ${getCurrentVersionLabel('privacy')}`
+            }
+            icon="shield-outline"
+            iconTone="accent"
+            showChevron
+            divider
+            onPress={() =>
+              navigation.navigate('LegalDocument', {
+                key: 'privacy',
+                userId: profile?.email,
+              })
+            }
+          />
         </Section>
       </Animated.View>
 

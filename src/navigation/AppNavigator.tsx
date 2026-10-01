@@ -13,6 +13,7 @@ import { GoalDetailsScreen } from '../screens/GoalDetailsScreen'
 import { RecurringExpensesScreen } from '../screens/RecurringExpensesScreen'
 import { CreateRecurringExpenseScreen } from '../screens/CreateRecurringExpenseScreen'
 import { RegisterScreen } from '../screens/RegisterScreen'
+import { LegalDocumentScreen } from '../screens/LegalDocumentScreen'
 import { appColors } from '../theme/app'
 
 export type RootStackParamList = {
@@ -36,6 +37,12 @@ export type RootStackParamList = {
 
   RecurringExpenses: undefined
   CreateRecurringExpense: undefined
+
+  LegalDocument: {
+    key: 'terms' | 'privacy'
+    requireAcceptance?: boolean
+    userId?: string
+  }
 }
 
 const Stack =
@@ -156,6 +163,12 @@ export function AppNavigator() {
           name="CreateRecurringExpense"
           component={CreateRecurringExpenseScreen}
           options={appScreenOptions}
+        />
+
+        <Stack.Screen
+          name="LegalDocument"
+          component={LegalDocumentScreen}
+          options={detailScreenOptions}
         />
       </Stack.Navigator>
     </NavigationContainer>
