@@ -638,14 +638,25 @@ export function DashboardScreen() {
 
       {/* 6 — Primary action */}
       {openFinanceBalance === null ? (
-        <Button
-          title="Nova transação"
-          onPress={() => navigation.navigate('CreateTransaction')}
-          size="lg"
-          fullWidth
-          icon="add"
-          style={styles.addButton}
-        />
+        <View>
+          <Button
+            title="Nova transação"
+            onPress={() => navigation.navigate('CreateTransaction')}
+            size="lg"
+            fullWidth
+            icon="add"
+            style={styles.addButton}
+          />
+          <Button
+            title="Escanear recibo"
+            onPress={() => navigation.navigate('ScanReceipt')}
+            variant="secondary"
+            size="lg"
+            fullWidth
+            icon="scan-outline"
+            style={styles.scanButton}
+          />
+        </View>
       ) : null}
     </ScrollScreen>
   );
@@ -721,5 +732,9 @@ const styles = StyleSheet.create({
   /* Action */
   addButton: {
     marginTop: appSpace.xs,
+  },
+
+  scanButton: {
+    marginTop: appSpace.sm,
   },
 });

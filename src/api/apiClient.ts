@@ -1,8 +1,5 @@
 import { getAccessToken } from './authApi'
-
-// The deployed host is a fixed Railway subdomain — it is infrastructure, not
-// branding, so it stays `gfinance` no matter what the product is called.
-const API_URL = 'https://gfinance-production-d5a6.up.railway.app'
+import { API_URL } from './serverConfig'
 
 /**
  * The only two endpoints that decide whether the account exists. They must not

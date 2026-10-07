@@ -1,7 +1,4 @@
-// Fixed Railway host — infrastructure, not branding. Renaming this breaks
-// every Open Finance call.
-const API_URL =
-  'https://gfinance-production-d5a6.up.railway.app';
+import { API_URL } from '../api/serverConfig'
 
 export async function createConnectToken(token: string) {
   const response = await fetch(

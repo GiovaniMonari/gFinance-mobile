@@ -1,11 +1,12 @@
 {
   "expo": {
     "name": "Econva",
-    "slug": "mobile",
+    "slug": "econva",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "scheme": "econva",
     "ios": {
       "supportsTablet": true
     },
@@ -17,13 +18,26 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.mobile"
+      "package": "com.econva.app"
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
-    ]
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O Econva precisa acessar suas fotos para escanear recibos.",
+          "cameraPermission": "O Econva precisa acessar sua câmera para fotografar recibos.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "a085fad9-8980-48b2-a062-e8ca26952912"
+      }
+    }
   }
 }

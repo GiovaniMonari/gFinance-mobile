@@ -272,6 +272,22 @@ export function TransactionsScreen() {
             </Section>
 
             <Section
+              title="Escanear recibo"
+              eyebrow="Recibo"
+              description="Fotografe o recibo para registrar a leitura"
+              style={styles.recurring}
+            >
+              <ListRow
+                title="Digitalizar recibo"
+                meta="Câmera ou galeria • JPG, PNG ou WEBP"
+                icon="scan-outline"
+                iconTone="accent"
+                showChevron
+                onPress={() => navigation.navigate('ScanReceipt')}
+              />
+            </Section>
+
+            <Section
               title="Movimentações"
               /*
                * Counted only when there is something to count. Leaving the

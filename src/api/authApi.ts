@@ -1,9 +1,11 @@
 import * as SecureStore from 'expo-secure-store'
+import { API_URL } from './serverConfig'
 
-// Fixed Railway host — infrastructure, not branding. Renaming this breaks
-// login and register.
-const API_URL =
-  'https://gfinance-production-d5a6.up.railway.app'
+/**
+ * Deadline for the password-reset request. See `requestPasswordReset`: this
+ * is the guarantee the promise settles, not a performance tweak.
+ */
+const REQUEST_TIMEOUT_MS = 30_000
 
 export async function login(
   email: string,
@@ -64,6 +66,91 @@ export async function register(
   }
 
   return data
+}
+
+/**
+ * Ask the backend to send password-reset instructions to this address.
+ *
+ * The reset form itself lives on the web application — the email carries the
+ * link there. This call only starts that flow, so there is no token handling
+ * and no password handling on this side.
+ *
+ * The response is treated as opaque on purpose: when the backend answers with
+ * a generic confirmation regardless of registration, repeating a different
+ * sentence here would reintroduce the account-enumeration signal the backend
+ * removed. Callers show their own generic confirmation copy.
+ */
+export async function requestPasswordReset(email: string) {
+  // Bare `fetch` has no deadline: against a stalled server or a dead route
+  // (a DHCP-rotated LAN IP, a captive portal, a half-open socket) the promise
+  // simply pends forever and every `await` on it — including the screen's
+  // `finally { setLoading(false) }` — never runs. The abort below is the
+  // guarantee that this promise always settles, so the loading state always
+  // clears. Thirty seconds is long enough for a cold backend to answer and
+  // short enough that a stuck request surfaces as an error, never a spinner.
+  const controller = new AbortController()
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    REQUEST_TIMEOUT_MS,
+  )
+
+  try {
+    const response = await fetch(`${API_URL}/auth/forgot-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email,
+      }),
+      signal: controller.signal,
+    })
+
+    // Read as text first: the endpoint may answer with an empty body, and
+    // `response.json()` would throw on it — the same handling `apiClient`
+    // uses for the same reason.
+    const text = await response.text()
+
+    let data: { message?: unknown } | null = null
+
+    if (text.trim()) {
+      try {
+        data = JSON.parse(text) as { message?: unknown }
+      } catch {
+        data = null
+      }
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        (data && typeof data.message === 'string' && data.message) ||
+          'Não foi possível solicitar a redefinição. Tente novamente em instantes.',
+      )
+    }
+
+    return data
+  } catch (error) {
+    // Name check, not `instanceof DOMException`: the abort reason surfaces
+    // with this name on every runtime, including Hermes.
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(
+        'O servidor demorou a responder. Verifique sua conexão e tente novamente.',
+      )
+    }
+
+    // Unreachable host, DNS failure, refused connection: `fetch` rejects with
+    // a TypeError whose message is a runtime string ("Network request
+    // failed"), not something to show the reader.
+    if (error instanceof TypeError) {
+      throw new Error(
+        'Sem conexão com o servidor. Verifique sua internet e tente novamente.',
+      )
+    }
+
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 export async function getAccessToken() {
